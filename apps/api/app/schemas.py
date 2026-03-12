@@ -14,11 +14,30 @@ class SessionRequest(BaseModel):
 
 class SessionResponse(BaseModel):
     id: str
+    email: str | None = None
     name: str
     role: str
     membership: str
     sparks: int
     focus: str
+
+
+class RegisterRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+    role: str = "player"
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class AuthSessionResponse(BaseModel):
+    token: str
+    expires_at: str = Field(alias="expiresAt")
+    user: SessionResponse
 
 
 class StoryAdvanceRequest(BaseModel):
@@ -90,3 +109,39 @@ class ReleaseResponse(BaseModel):
     projection: str
     status: str
     created_at: str = Field(alias="createdAt")
+
+
+class BillingPlanResponse(BaseModel):
+    id: str
+    name: str
+    price: int
+    billing_interval: str = Field(alias="billingInterval")
+    perks: list[str]
+
+
+class SubscriptionResponse(BaseModel):
+    id: str
+    user_id: str = Field(alias="userId")
+    plan_id: str = Field(alias="planId")
+    plan_name: str = Field(alias="planName")
+    price: int
+    status: str
+    renewal_at: str = Field(alias="renewalAt")
+    created_at: str = Field(alias="createdAt")
+
+
+class CheckoutRequest(BaseModel):
+    user_id: str = Field(alias="userId")
+    plan_id: str = Field(alias="planId")
+    sku: str
+    category: str = "subscription"
+    amount: int
+    currency: str = "KRW"
+
+
+class CheckoutResponse(BaseModel):
+    purchase_id: str = Field(alias="purchaseId")
+    subscription_id: str = Field(alias="subscriptionId")
+    status: str
+    plan_id: str = Field(alias="planId")
+    renewal_at: str = Field(alias="renewalAt")

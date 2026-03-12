@@ -1,8 +1,18 @@
 "use client";
 
-import { startTransition, useDeferredValue, useEffect, useState } from "react";
+import {
+  startTransition,
+  useDeferredValue,
+  useEffect,
+  useEffectEvent,
+  useState,
+} from "react";
 import { useSearchParams } from "next/navigation";
 import {
+  billingPlans,
+  type BillingPlan,
+  type BootstrapPayload,
+  type CharacterProfile,
   characterProfiles,
   creatorTemplates,
   featuredWorks,
@@ -10,6 +20,9 @@ import {
   opsSignals,
   partyScenarios,
   productViews,
+  type ReleaseRecord,
+  type StoryEpisode,
+  type SubscriptionRecord,
   storyEpisodes,
   type ProductView,
   type UserPreset,
@@ -17,6 +30,8 @@ import {
 } from "@/data/platform";
 
 type SessionState = {
+  id: string;
+  email?: string | null;
   name: string;
   role: "player" | "creator" | "operator";
   membership: string;
@@ -49,14 +64,25 @@ type GeneratedShot = {
   tagline: string;
 };
 
-type CreatorRelease = {
-  id: string;
-  title: string;
-  module: string;
-  pitch: string;
-  price: string;
-  projection: string;
+type CreatorRelease = ReleaseRecord;
+
+type AuthSessionPayload = {
+  token: string;
+  expiresAt: string;
+  user: SessionState;
+};
+
+type CheckoutPayload = {
+  purchaseId: string;
+  subscriptionId: string;
   status: string;
+  planId: string;
+  renewalAt: string;
+};
+
+type ProductShellProps = {
+  initialData?: BootstrapPayload | null;
+  initialApiStatus?: "online" | "offline";
 };
 
 type Snapshot = {
@@ -77,6 +103,19 @@ type Snapshot = {
 
 const STORAGE_KEY = "projectr.product-shell.v2";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+const FALLBACK_BOOTSTRAP: BootstrapPayload = {
+  presets: userPresets,
+  feed: featuredWorks,
+  episodes: storyEpisodes,
+  characters: characterProfiles,
+  partyScenarios,
+  styles: imageStylePresets,
+  creatorTemplates,
+  opsSignals,
+  plans: billingPlans,
+  subscriptions: [],
+  releases: [],
+};
 
 const moduleToView: Record<string, ProductView> = {
   story: "story",
@@ -89,6 +128,8 @@ const moduleToView: Record<string, ProductView> = {
 
 function createSession(preset: UserPreset): SessionState {
   return {
+    id: preset.id,
+    email: preset.email ?? null,
     name: preset.name,
     role: preset.role,
     membership: preset.membership,
@@ -97,8 +138,46 @@ function createSession(preset: UserPreset): SessionState {
   };
 }
 
-function createInitialStoryLogs(): StoryLog[] {
-  const episode = storyEpisodes[0];
+function resolveBootstrap(initialData?: BootstrapPayload | null): BootstrapPayload {
+  if (!initialData) {
+    return FALLBACK_BOOTSTRAP;
+  }
+
+  return {
+    presets: initialData.presets.length > 0 ? initialData.presets : FALLBACK_BOOTSTRAP.presets,
+    feed: initialData.feed.length > 0 ? initialData.feed : FALLBACK_BOOTSTRAP.feed,
+    episodes:
+      initialData.episodes.length > 0 ? initialData.episodes : FALLBACK_BOOTSTRAP.episodes,
+    characters:
+      initialData.characters.length > 0
+        ? initialData.characters
+        : FALLBACK_BOOTSTRAP.characters,
+    partyScenarios:
+      initialData.partyScenarios.length > 0
+        ? initialData.partyScenarios
+        : FALLBACK_BOOTSTRAP.partyScenarios,
+    styles: initialData.styles.length > 0 ? initialData.styles : FALLBACK_BOOTSTRAP.styles,
+    creatorTemplates:
+      initialData.creatorTemplates.length > 0
+        ? initialData.creatorTemplates
+        : FALLBACK_BOOTSTRAP.creatorTemplates,
+    opsSignals:
+      initialData.opsSignals.length > 0
+        ? initialData.opsSignals
+        : FALLBACK_BOOTSTRAP.opsSignals,
+    plans: initialData.plans.length > 0 ? initialData.plans : FALLBACK_BOOTSTRAP.plans,
+    subscriptions: initialData.subscriptions,
+    releases: initialData.releases,
+  };
+}
+
+function createInitialStoryLogs(episodes: StoryEpisode[]): StoryLog[] {
+  const episode = episodes[0];
+
+  if (!episode) {
+    return [];
+  }
+
   return [
     {
       title: episode.title,
@@ -107,9 +186,9 @@ function createInitialStoryLogs(): StoryLog[] {
   ];
 }
 
-function createInitialChatState() {
+function createInitialChatState(characters: CharacterProfile[]) {
   return Object.fromEntries(
-    characterProfiles.map((character) => [
+    characters.map((character) => [
       character.id,
       [
         {
@@ -120,6 +199,20 @@ function createInitialChatState() {
       ],
     ]),
   ) as Record<string, ChatMessage[]>;
+}
+
+function normalizeRelease(
+  release: Pick<
+    CreatorRelease,
+    "id" | "title" | "module" | "pitch" | "price" | "projection" | "status"
+  > &
+    Partial<Pick<CreatorRelease, "createdAt">>,
+): CreatorRelease {
+  return {
+    ...release,
+    price: Number(release.price),
+    createdAt: release.createdAt ?? new Date().toISOString(),
+  };
 }
 
 async function requestApi<T>(path: string, init?: RequestInit): Promise<T | null> {
@@ -142,40 +235,98 @@ async function requestApi<T>(path: string, init?: RequestInit): Promise<T | null
   }
 }
 
-export function ProductShell() {
+export function ProductShell({
+  initialData,
+  initialApiStatus = initialData ? "online" : "offline",
+}: ProductShellProps) {
+  const initialBootstrap = resolveBootstrap(initialData);
   const searchParams = useSearchParams();
   const [hydrated, setHydrated] = useState(false);
   const [session, setSession] = useState<SessionState | null>(
-    createSession(userPresets[0]),
+    createSession(initialBootstrap.presets[0]),
   );
   const [activeView, setActiveView] = useState<ProductView>("discover");
   const [apiStatus, setApiStatus] = useState<"checking" | "online" | "offline">(
-    "checking",
+    initialApiStatus,
   );
-  const [feedWorks, setFeedWorks] = useState(featuredWorks);
-  const [opsBoard, setOpsBoard] = useState(opsSignals);
+  const [presetUsers, setPresetUsers] = useState(initialBootstrap.presets);
+  const [feedWorks, setFeedWorks] = useState(initialBootstrap.feed);
+  const [storyArc, setStoryArc] = useState(initialBootstrap.episodes);
+  const [characterRoster, setCharacterRoster] = useState(initialBootstrap.characters);
+  const [partyRooms, setPartyRooms] = useState(initialBootstrap.partyScenarios);
+  const [styleLibrary, setStyleLibrary] = useState(initialBootstrap.styles);
+  const [templateLibrary, setTemplateLibrary] = useState(initialBootstrap.creatorTemplates);
+  const [opsBoard, setOpsBoard] = useState(initialBootstrap.opsSignals);
+  const [billingCatalog, setBillingCatalog] = useState(initialBootstrap.plans);
+  const [subscriptions, setSubscriptions] = useState(initialBootstrap.subscriptions);
   const [discoverSearch, setDiscoverSearch] = useState("");
-  const [selectedWorkId, setSelectedWorkId] = useState(featuredWorks[0].id);
+  const [selectedWorkId, setSelectedWorkId] = useState(initialBootstrap.feed[0].id);
   const [selectedCharacterId, setSelectedCharacterId] = useState(
-    characterProfiles[0].id,
+    initialBootstrap.characters[0].id,
   );
-  const [selectedPartyId, setSelectedPartyId] = useState(partyScenarios[0].id);
+  const [selectedPartyId, setSelectedPartyId] = useState(initialBootstrap.partyScenarios[0].id);
   const [storyIndex, setStoryIndex] = useState(0);
   const [trustScore, setTrustScore] = useState(52);
   const [hypeScore, setHypeScore] = useState(48);
-  const [storyLogs, setStoryLogs] = useState<StoryLog[]>(createInitialStoryLogs);
-  const [chatMessages, setChatMessages] = useState(createInitialChatState);
+  const [storyLogs, setStoryLogs] = useState<StoryLog[]>(() =>
+    createInitialStoryLogs(initialBootstrap.episodes),
+  );
+  const [chatMessages, setChatMessages] = useState(() =>
+    createInitialChatState(initialBootstrap.characters),
+  );
   const [chatDraft, setChatDraft] = useState("");
   const [partyRounds, setPartyRounds] = useState<PartyRound[]>([]);
   const [imagePrompt, setImagePrompt] = useState("");
-  const [selectedStyleId, setSelectedStyleId] = useState(imageStylePresets[0].id);
+  const [selectedStyleId, setSelectedStyleId] = useState(initialBootstrap.styles[0].id);
   const [generatedShots, setGeneratedShots] = useState<GeneratedShot[]>([]);
   const [draftTitle, setDraftTitle] = useState("");
   const [draftPitch, setDraftPitch] = useState("");
   const [draftPrice, setDraftPrice] = useState("4900");
   const [draftModule, setDraftModule] = useState<ProductView>("creator");
-  const [creatorReleases, setCreatorReleases] = useState<CreatorRelease[]>([]);
+  const [creatorReleases, setCreatorReleases] = useState<CreatorRelease[]>(
+    initialBootstrap.releases.map(normalizeRelease),
+  );
+  const [selectedPlanId, setSelectedPlanId] = useState(
+    initialBootstrap.plans.find((plan) => plan.id !== "free")?.id ??
+      initialBootstrap.plans[0].id,
+  );
+  const [billingMessage, setBillingMessage] = useState("");
   const deferredSearch = useDeferredValue(discoverSearch);
+
+  const applyBootstrapPayload = useEffectEvent((payload: BootstrapPayload) => {
+    setPresetUsers(payload.presets);
+    setFeedWorks(payload.feed);
+    setStoryArc(payload.episodes);
+    setCharacterRoster(payload.characters);
+    setPartyRooms(payload.partyScenarios);
+    setStyleLibrary(payload.styles);
+    setTemplateLibrary(payload.creatorTemplates);
+    setOpsBoard(payload.opsSignals);
+    setBillingCatalog(payload.plans);
+    setSubscriptions(payload.subscriptions);
+    setCreatorReleases(payload.releases.map(normalizeRelease));
+    setSelectedWorkId((current) =>
+      payload.feed.some((work) => work.id === current) ? current : payload.feed[0].id,
+    );
+    setSelectedCharacterId((current) =>
+      payload.characters.some((character) => character.id === current)
+        ? current
+        : payload.characters[0].id,
+    );
+    setSelectedPartyId((current) =>
+      payload.partyScenarios.some((scenario) => scenario.id === current)
+        ? current
+        : payload.partyScenarios[0].id,
+    );
+    setSelectedStyleId((current) =>
+      payload.styles.some((style) => style.id === current) ? current : payload.styles[0].id,
+    );
+    setSelectedPlanId((current) =>
+      payload.plans.some((plan) => plan.id === current)
+        ? current
+        : payload.plans.find((plan) => plan.id !== "free")?.id ?? payload.plans[0].id,
+    );
+  });
 
   useEffect(() => {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -183,7 +334,23 @@ export function ProductShell() {
     if (raw) {
       try {
         const snapshot = JSON.parse(raw) as Snapshot;
-        setSession(snapshot.session);
+        const restoredPreset =
+          initialBootstrap.presets.find((preset) => preset.name === snapshot.session?.name) ??
+          initialBootstrap.presets[0];
+
+        setSession(
+          snapshot.session
+            ? {
+                id: snapshot.session.id ?? restoredPreset.id,
+                email: snapshot.session.email ?? restoredPreset.email ?? null,
+                name: snapshot.session.name,
+                role: snapshot.session.role,
+                membership: snapshot.session.membership,
+                sparks: snapshot.session.sparks,
+                focus: snapshot.session.focus,
+              }
+            : null,
+        );
         setActiveView(snapshot.activeView);
         setSelectedWorkId(snapshot.selectedWorkId);
         setSelectedCharacterId(snapshot.selectedCharacterId);
@@ -195,7 +362,7 @@ export function ProductShell() {
         setChatMessages(snapshot.chatMessages);
         setPartyRounds(snapshot.partyRounds);
         setGeneratedShots(snapshot.generatedShots);
-        setCreatorReleases(snapshot.creatorReleases);
+        setCreatorReleases(snapshot.creatorReleases.map(normalizeRelease));
       } catch {
         window.localStorage.removeItem(STORAGE_KEY);
       }
@@ -258,61 +425,45 @@ export function ProductShell() {
   }, [searchParams]);
 
   useEffect(() => {
+    if (!session) {
+      return;
+    }
+
+    const matchingPlan = billingCatalog.find((plan) => plan.name === session.membership);
+
+    if (matchingPlan) {
+      setSelectedPlanId(matchingPlan.id);
+    }
+  }, [billingCatalog, session]);
+
+  useEffect(() => {
     let alive = true;
 
     const bootstrapApi = async () => {
-      const health = await requestApi<{ status: string }>("/health");
+      const query = session?.id ? `?userId=${encodeURIComponent(session.id)}` : "";
+      const bootstrap = await requestApi<BootstrapPayload>(`/bootstrap${query}`);
 
       if (!alive) {
         return;
       }
 
-      if (!health) {
+      if (!bootstrap) {
         setApiStatus("offline");
         return;
       }
 
       setApiStatus("online");
-
-      const [remoteFeed, remoteOps, remoteReleases] = await Promise.all([
-        requestApi<typeof featuredWorks>("/catalog/feed"),
-        requestApi<typeof opsSignals>("/ops/signals"),
-        requestApi<CreatorRelease[]>("/creator/releases"),
-      ]);
-
-      if (!alive) {
-        return;
-      }
-
-      if (remoteFeed && remoteFeed.length > 0) {
-        setFeedWorks(remoteFeed);
-        setSelectedWorkId((current) =>
-          remoteFeed.some((work) => work.id === current) ? current : remoteFeed[0].id,
-        );
-      }
-
-      if (remoteOps && remoteOps.length > 0) {
-        setOpsBoard(remoteOps);
-      }
-
-      if (remoteReleases) {
-        setCreatorReleases(
-          remoteReleases.map((release) => ({
-            ...release,
-            projection:
-              "projection" in release ? release.projection : "월 수익 예측 준비 중",
-            status: "status" in release ? release.status : "심사 대기",
-          })),
-        );
-      }
+      applyBootstrapPayload(resolveBootstrap(bootstrap));
     };
 
-    void bootstrapApi();
+    if (hydrated) {
+      void bootstrapApi();
+    }
 
     return () => {
       alive = false;
     };
-  }, []);
+  }, [hydrated, session?.id]);
 
   const filteredWorks = feedWorks.filter((work) => {
     const query = deferredSearch.trim().toLowerCase();
@@ -328,17 +479,24 @@ export function ProductShell() {
   });
 
   const selectedWork = feedWorks.find((work) => work.id === selectedWorkId) ?? feedWorks[0];
-  const activeEpisode = storyEpisodes[Math.min(storyIndex, storyEpisodes.length - 1)];
+  const activeEpisode = storyArc[Math.min(storyIndex, storyArc.length - 1)];
   const activeCharacter =
-    characterProfiles.find((character) => character.id === selectedCharacterId) ??
-    characterProfiles[0];
+    characterRoster.find((character) => character.id === selectedCharacterId) ??
+    characterRoster[0];
   const activeChat = chatMessages[selectedCharacterId] ?? [];
   const activeParty =
-    partyScenarios.find((scenario) => scenario.id === selectedPartyId) ??
-    partyScenarios[0];
+    partyRooms.find((scenario) => scenario.id === selectedPartyId) ?? partyRooms[0];
   const activeStyle =
-    imageStylePresets.find((style) => style.id === selectedStyleId) ??
-    imageStylePresets[0];
+    styleLibrary.find((style) => style.id === selectedStyleId) ?? styleLibrary[0];
+  const selectedPlan =
+    billingCatalog.find((plan) => plan.id === selectedPlanId) ?? billingCatalog[0];
+  const activeSubscription =
+    session == null
+      ? null
+      : subscriptions.find(
+          (subscription) =>
+            subscription.userId === session.id && subscription.status === "active",
+        ) ?? null;
 
   const summaryMetrics = [
     {
@@ -367,12 +525,14 @@ export function ProductShell() {
   };
 
   const activatePreset = async (preset: UserPreset) => {
-    const remoteSession = await requestApi<SessionState>("/auth/session", {
+    const remoteSession = await requestApi<AuthSessionPayload>("/auth/session", {
       method: "POST",
       body: JSON.stringify({ presetId: preset.id }),
     });
 
-    setSession(remoteSession ?? createSession(preset));
+    const nextSession = remoteSession?.user ?? createSession(preset);
+    setSession(nextSession);
+    setBillingMessage("");
 
     if (preset.role === "creator") {
       changeView("creator");
@@ -421,7 +581,7 @@ export function ProductShell() {
         },
       ]);
       setStoryIndex((current) => {
-        const nextIndex = storyEpisodes.findIndex(
+        const nextIndex = storyArc.findIndex(
           (episode) => episode.id === remoteResult.nextEpisodeId,
         );
         return nextIndex >= 0 ? nextIndex : current;
@@ -438,16 +598,14 @@ export function ProductShell() {
         detail: choice.result,
       },
     ]);
-    setStoryIndex((current) =>
-      Math.min(current + 1, storyEpisodes.length - 1),
-    );
+    setStoryIndex((current) => Math.min(current + 1, storyArc.length - 1));
   };
 
   const resetStory = () => {
     setStoryIndex(0);
     setTrustScore(52);
     setHypeScore(48);
-    setStoryLogs(createInitialStoryLogs());
+    setStoryLogs(createInitialStoryLogs(storyArc));
   };
 
   const sendChat = async () => {
@@ -630,6 +788,7 @@ export function ProductShell() {
       price: number;
       projection: string;
       status: string;
+      createdAt: string;
     }>("/creator/releases", {
       method: "POST",
       body: JSON.stringify({
@@ -643,15 +802,7 @@ export function ProductShell() {
     if (remoteRelease) {
       startTransition(() => {
         setCreatorReleases((current) => [
-          {
-            id: remoteRelease.id,
-            title: remoteRelease.title,
-            module: remoteRelease.module,
-            pitch: remoteRelease.pitch,
-            price: `${remoteRelease.price}`,
-            projection: remoteRelease.projection,
-            status: remoteRelease.status,
-          },
+          normalizeRelease(remoteRelease),
           ...current,
         ]);
       });
@@ -670,9 +821,10 @@ export function ProductShell() {
           title,
           module: draftModule,
           pitch,
-          price: draftPrice,
+          price: Number(draftPrice),
           projection: forecast,
           status: "심사 대기",
+          createdAt: new Date().toISOString(),
         },
         ...current,
       ]);
@@ -680,6 +832,74 @@ export function ProductShell() {
 
     setDraftTitle("");
     setDraftPitch("");
+  };
+
+  const checkoutPlan = async (plan: BillingPlan) => {
+    if (!session) {
+      setBillingMessage("먼저 로그인한 뒤 멤버십을 시작할 수 있습니다.");
+      return;
+    }
+
+    if (plan.price === 0) {
+      setSession((current) =>
+        current
+          ? {
+              ...current,
+              membership: plan.name,
+            }
+          : current,
+      );
+      setBillingMessage("Explorer 플랜이 활성화되었습니다.");
+      return;
+    }
+
+    const checkout = await requestApi<CheckoutPayload>("/billing/checkout", {
+      method: "POST",
+      body: JSON.stringify({
+        userId: session.id,
+        planId: plan.id,
+        sku: `${plan.id}-monthly`,
+        category: "subscription",
+        amount: plan.price,
+        currency: "KRW",
+      }),
+    });
+
+    if (!checkout) {
+      setBillingMessage("결제 세션을 만들지 못했습니다.");
+      return;
+    }
+
+    setSession((current) =>
+      current
+        ? {
+            ...current,
+            membership: plan.name,
+          }
+        : current,
+    );
+
+    const remoteBootstrap = await requestApi<BootstrapPayload>(
+      `/bootstrap?userId=${encodeURIComponent(session.id)}`,
+    );
+
+    if (remoteBootstrap) {
+      applyBootstrapPayload(resolveBootstrap(remoteBootstrap));
+    } else {
+      const remoteSubscriptions = await requestApi<SubscriptionRecord[]>(
+        `/billing/subscriptions?userId=${encodeURIComponent(session.id)}`,
+      );
+
+      if (remoteSubscriptions) {
+        setSubscriptions(remoteSubscriptions);
+      }
+    }
+
+    setBillingMessage(
+      `${plan.name} 결제가 완료되었습니다. 다음 갱신일 ${new Date(
+        checkout.renewalAt,
+      ).toLocaleDateString("ko-KR")}`,
+    );
   };
 
   return (
@@ -690,10 +910,10 @@ export function ProductShell() {
             Live Product
           </div>
           <h2 className="mt-3 font-[family-name:var(--font-display)] text-2xl font-semibold text-white">
-            지금 바로 쓸 수 있는 로컬 제품 모드
+            서버 데이터로 구동되는 제품 콘솔
           </h2>
           <p className="mt-3 text-sm leading-7 text-white/64">
-            실제 API 대신 로컬 상태로 제품 흐름을 검증하는 단계입니다.
+            인증, 피드, 릴리즈, 구독 상태를 같은 런타임 안에서 검증하는 단계입니다.
           </p>
         </div>
 
@@ -736,7 +956,7 @@ export function ProductShell() {
             Quick Login
           </div>
           <div className="mt-3 space-y-2">
-            {userPresets.map((preset) => (
+            {presetUsers.map((preset) => (
               <button
                 key={preset.id}
                 type="button"
@@ -755,6 +975,76 @@ export function ProductShell() {
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="rounded-[1.6rem] border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm uppercase tracking-[0.2em] text-white/54">
+              Membership
+            </div>
+            <div className="text-xs text-white/56">
+              {activeSubscription?.planName ?? session?.membership ?? "Guest"}
+            </div>
+          </div>
+          <div className="mt-3 space-y-2">
+            {billingCatalog.map((plan) => (
+              <button
+                key={plan.id}
+                type="button"
+                onClick={() => setSelectedPlanId(plan.id)}
+                className={`w-full rounded-2xl border px-4 py-3 text-left transition ${
+                  selectedPlanId === plan.id
+                    ? "border-[var(--accent)] bg-[rgba(247,107,28,0.12)]"
+                    : "border-white/10 bg-white/5"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="font-semibold text-white">{plan.name}</div>
+                  <div className="text-xs uppercase text-[var(--highlight)]">
+                    {plan.price === 0 ? "Free" : `₩${plan.price.toLocaleString("ko-KR")}`}
+                  </div>
+                </div>
+                <div className="mt-1 text-xs text-white/56">{plan.billingInterval}</div>
+              </button>
+            ))}
+          </div>
+          {selectedPlan && (
+            <>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {selectedPlan.perks.slice(0, 3).map((perk) => (
+                  <span
+                    key={perk}
+                    className="rounded-full border border-white/10 px-3 py-2 text-[11px] text-white/72"
+                  >
+                    {perk}
+                  </span>
+                ))}
+              </div>
+              <div className="mt-4 text-xs leading-6 text-white/58">
+                {activeSubscription
+                  ? `다음 갱신일 ${new Date(activeSubscription.renewalAt).toLocaleDateString(
+                      "ko-KR",
+                    )}`
+                  : "활성 구독이 없으면 선택한 플랜으로 즉시 결제할 수 있습니다."}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  void checkoutPlan(selectedPlan);
+                }}
+                className="mt-4 w-full rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-[#130e09]"
+              >
+                {selectedPlan.price === 0
+                  ? "Explorer 활성화"
+                  : `${selectedPlan.name} 시작`}
+              </button>
+            </>
+          )}
+          {billingMessage && (
+            <div className="mt-3 rounded-2xl bg-black/20 px-4 py-3 text-sm text-white/76">
+              {billingMessage}
+            </div>
+          )}
         </div>
       </aside>
 
@@ -998,7 +1288,7 @@ export function ProductShell() {
                 Character Lineup
               </div>
               <div className="mt-4 space-y-3">
-                {characterProfiles.map((character) => (
+                {characterRoster.map((character) => (
                   <button
                     key={character.id}
                     type="button"
@@ -1075,7 +1365,7 @@ export function ProductShell() {
                 Party Rooms
               </div>
               <div className="mt-4 space-y-3">
-                {partyScenarios.map((scenario) => (
+                {partyRooms.map((scenario) => (
                   <button
                     key={scenario.id}
                     type="button"
@@ -1178,7 +1468,7 @@ export function ProductShell() {
                 className="mt-5 min-h-36 w-full rounded-[1.6rem] border border-white/10 bg-black/20 px-4 py-4 text-sm text-white outline-none"
               />
               <div className="mt-5 grid gap-3">
-                {imageStylePresets.map((style) => (
+                {styleLibrary.map((style) => (
                   <button
                     key={style.id}
                     type="button"
@@ -1218,8 +1508,8 @@ export function ProductShell() {
                 )}
                 {generatedShots.map((shot) => {
                   const style =
-                    imageStylePresets.find((entry) => entry.id === shot.styleId) ??
-                    imageStylePresets[0];
+                    styleLibrary.find((entry) => entry.id === shot.styleId) ??
+                    styleLibrary[0];
 
                   return (
                     <div
@@ -1303,7 +1593,7 @@ export function ProductShell() {
                   Launch Templates
                 </div>
                 <div className="mt-4 space-y-3">
-                  {creatorTemplates.map((template) => (
+                  {templateLibrary.map((template) => (
                     <div
                       key={template.id}
                       className="rounded-[1.4rem] border border-white/8 bg-white/4 px-4 py-4"

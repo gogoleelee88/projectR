@@ -304,6 +304,44 @@ OPS_SIGNALS = [
     {"label": "세이프티 필터 정확도", "value": "98.6%", "tone": "안정"},
 ]
 
+PAYMENT_PLANS = [
+    {
+        "id": "free",
+        "name": "Explorer",
+        "price": 0,
+        "billing_interval": "monthly",
+        "perks": [
+            "기본 피드 탐색",
+            "표준 캐릭터 채팅",
+            "기본 이미지 장면 생성",
+        ],
+    },
+    {
+        "id": "legend",
+        "name": "Legend Pass",
+        "price": 19900,
+        "billing_interval": "monthly",
+        "perks": [
+            "프리미엄 스토리 패스",
+            "하이퍼챗 우선권",
+            "고해상도 이미지 장면",
+            "광고 없는 플레이",
+        ],
+    },
+    {
+        "id": "creator-pro",
+        "name": "Creator Pro",
+        "price": 49900,
+        "billing_interval": "monthly",
+        "perks": [
+            "작품 발행 우선 심사",
+            "스토어 상품 등록",
+            "세일즈 분석 대시보드",
+            "팬클럽 구독 도구",
+        ],
+    },
+]
+
 
 def list_feed(query: str | None = None) -> list[dict[str, Any]]:
     if not query:

@@ -9,6 +9,7 @@ export type ProductView =
 
 export type UserPreset = {
   id: string;
+  email?: string;
   name: string;
   role: "player" | "creator" | "operator";
   membership: string;
@@ -87,6 +88,56 @@ export type CreatorTemplate = {
   outline: string[];
 };
 
+export type OpsSignal = {
+  label: string;
+  value: string;
+  tone: string;
+};
+
+export type BillingPlan = {
+  id: string;
+  name: string;
+  price: number;
+  billingInterval: string;
+  perks: string[];
+};
+
+export type SubscriptionRecord = {
+  id: string;
+  userId: string;
+  planId: string;
+  planName: string;
+  price: number;
+  status: string;
+  renewalAt: string;
+  createdAt: string;
+};
+
+export type ReleaseRecord = {
+  id: string;
+  title: string;
+  module: string;
+  pitch: string;
+  price: number;
+  projection: string;
+  status: string;
+  createdAt: string;
+};
+
+export type BootstrapPayload = {
+  presets: UserPreset[];
+  feed: FeaturedWork[];
+  episodes: StoryEpisode[];
+  characters: CharacterProfile[];
+  partyScenarios: PartyScenario[];
+  styles: ImageStylePreset[];
+  creatorTemplates: CreatorTemplate[];
+  opsSignals: OpsSignal[];
+  plans: BillingPlan[];
+  subscriptions: SubscriptionRecord[];
+  releases: ReleaseRecord[];
+};
+
 export const productViews: Array<{
   id: ProductView;
   label: string;
@@ -104,6 +155,7 @@ export const productViews: Array<{
 export const userPresets: UserPreset[] = [
   {
     id: "aria",
+    email: "aria@projectr.local",
     name: "Aria",
     role: "player",
     membership: "Legend Pass",
@@ -112,6 +164,7 @@ export const userPresets: UserPreset[] = [
   },
   {
     id: "jin",
+    email: "jin@projectr.local",
     name: "Jin",
     role: "creator",
     membership: "Creator Pro",
@@ -120,6 +173,7 @@ export const userPresets: UserPreset[] = [
   },
   {
     id: "mina",
+    email: "mina@projectr.local",
     name: "Mina",
     role: "operator",
     membership: "Live Ops",
@@ -425,7 +479,41 @@ export const creatorTemplates: CreatorTemplate[] = [
   },
 ];
 
-export const opsSignals = [
+export const billingPlans: BillingPlan[] = [
+  {
+    id: "free",
+    name: "Explorer",
+    price: 0,
+    billingInterval: "monthly",
+    perks: ["기본 피드 탐색", "표준 캐릭터 채팅", "기본 이미지 장면 생성"],
+  },
+  {
+    id: "legend",
+    name: "Legend Pass",
+    price: 19900,
+    billingInterval: "monthly",
+    perks: [
+      "프리미엄 스토리 패스",
+      "하이퍼챗 우선권",
+      "고해상도 이미지 장면",
+      "광고 없는 플레이",
+    ],
+  },
+  {
+    id: "creator-pro",
+    name: "Creator Pro",
+    price: 49900,
+    billingInterval: "monthly",
+    perks: [
+      "작품 발행 우선 심사",
+      "스토어 상품 등록",
+      "세일즈 분석 대시보드",
+      "팬클럽 구독 도구",
+    ],
+  },
+];
+
+export const opsSignals: OpsSignal[] = [
   { label: "실시간 신고 큐", value: "184건", tone: "주의" },
   { label: "모델 장애 우회율", value: "99.982%", tone: "안정" },
   { label: "유료 전환 실험", value: "12개 진행", tone: "실험" },
