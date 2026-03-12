@@ -1,0 +1,18 @@
+{
+  "name": "projectr",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Project R monorepo for the next Crack web and mobile products.",
+  "engines": {
+    "node": ">=22.13.1"
+  },
+  "scripts": {
+    "dev:web": "npm --prefix apps/web run dev",
+    "build:web": "npm --prefix apps/web run build",
+    "lint:web": "npm --prefix apps/web run lint",
+    "dev:mobile": "npm --prefix apps/mobile run start",
+    "android": "npm --prefix apps/mobile run android",
+    "ios": "npm --prefix apps/mobile run ios",
+    "check": "npm run lint:web"
+  }
+}

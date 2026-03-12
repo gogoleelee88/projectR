@@ -1,0 +1,15 @@
+node_modules/
+apps/*/node_modules/
+apps/web/.next/
+apps/web/out/
+apps/web/.vercel/
+apps/mobile/.expo/
+apps/mobile/dist/
+apps/mobile/web-build/
+*.log
+*.tsbuildinfo
+.DS_Store
+Thumbs.db
+.env
+.env.local
+.env.*.local
