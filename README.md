@@ -12,22 +12,36 @@ This repository now includes a locally usable product shell built around:
 
 - Story: world-scale interactive fiction where the user becomes the protagonist.
 - Character: short-form conversation loops optimized for fast emotional engagement.
-- Party Chat: synchronous multiplayer story rooms with AI-led turn resolution.
+- Party Chat: synchronous multiplayer story rooms with invite codes, WebSocket sync, and AI-led turn resolution.
 - Image Studio: prompt-driven scene card generation for fast visual iteration.
 - Creator Console: publishing queue, pricing setup, and launch templates.
 - Safety and Memory: policy-aware generation, long-term memory, and moderation tooling.
 
 ## What works now
 
-- FastAPI backend with health, auth, feed, story, chat, party, studio, creator, and ops endpoints
+- FastAPI backend with health, auth, feed, story, chat, party, studio, creator, billing, and ops endpoints
 - Web landing plus a playable `/app` product shell
+- Direct email signup, login, session restore, and logout in the web app
 - Discover feed with selectable flagship content
 - Story choice flow with progression log
-- Character chat flow with local response generation
-- Party room action resolution log
-- Image prompt studio with generated visual cards
+- Character chat flow with fallback responses plus optional live chat webhook adapter
+- Realtime party rooms with invite codes, live participants, and synchronized room logs
+- Image prompt studio with generated visual cards plus optional live image webhook adapter
 - Creator queue with release drafts and revenue projection
+- Membership checkout with subscription records and optional live billing webhook adapter
 - Mobile app with the same core tabs and local interaction loops
+
+## Optional live adapters
+
+If you already operate external AI or billing services, point the API at them with these environment variables:
+
+```bash
+PROJECTR_CHAT_WEBHOOK_URL=https://your-service.example/chat
+PROJECTR_STUDIO_WEBHOOK_URL=https://your-service.example/studio
+PROJECTR_BILLING_WEBHOOK_URL=https://your-service.example/checkout
+```
+
+Each webhook is expected to accept JSON POST requests and return the normalized response fields used by the API.
 
 ## Commands
 
@@ -67,6 +81,6 @@ The build and `next start` flow above were verified successfully from `X:\apps\w
 
 ## Next steps
 
-1. Replace local state with real auth, feed, chat, image, and commerce APIs.
-2. Add persistent storage and syncing between web and mobile sessions.
+1. Replace webhook adapters with production AI, billing, analytics, and moderation providers.
+2. Add persistent realtime party storage and recovery across server restarts.
 3. Add CI, visual regression checks, analytics, crash reporting, and release automation.

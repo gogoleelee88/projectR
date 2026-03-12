@@ -79,6 +79,48 @@ class PartyResolveResponse(BaseModel):
     summary: str
 
 
+class PartySessionCreateRequest(BaseModel):
+    scenario_id: str = Field(alias="scenarioId")
+    participant_name: str = Field(alias="participantName")
+    user_id: str | None = Field(default=None, alias="userId")
+
+
+class PartySessionJoinRequest(BaseModel):
+    invite_code: str = Field(alias="inviteCode")
+    participant_name: str = Field(alias="participantName")
+    user_id: str | None = Field(default=None, alias="userId")
+
+
+class PartySessionActionRequest(BaseModel):
+    participant_id: str = Field(alias="participantId")
+    action: str
+
+
+class PartyParticipantResponse(BaseModel):
+    id: str
+    name: str
+    role: str
+
+
+class PartyLogEntryResponse(BaseModel):
+    id: str
+    actor_name: str = Field(alias="actorName")
+    action: str
+    summary: str
+    created_at: str = Field(alias="createdAt")
+
+
+class PartySessionResponse(BaseModel):
+    session_id: str = Field(alias="sessionId")
+    invite_code: str = Field(alias="inviteCode")
+    scenario_id: str = Field(alias="scenarioId")
+    scenario_title: str = Field(alias="scenarioTitle")
+    status: str
+    participant_id: str | None = Field(default=None, alias="participantId")
+    participants: list[PartyParticipantResponse]
+    log: list[PartyLogEntryResponse]
+
+
 class ImageGenerateRequest(BaseModel):
     prompt: str
     style_id: str = Field(alias="styleId")
@@ -145,3 +187,5 @@ class CheckoutResponse(BaseModel):
     status: str
     plan_id: str = Field(alias="planId")
     renewal_at: str = Field(alias="renewalAt")
+    checkout_url: str | None = Field(default=None, alias="checkoutUrl")
+    provider: str | None = None

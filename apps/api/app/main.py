@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from sqlite3 import IntegrityError
 
@@ -31,8 +31,11 @@ from .db import (
     list_releases,
     list_story_episodes,
     list_subscriptions,
+    revoke_auth_session,
     resolve_party_action,
 )
+from .party import party_sessions
+from .runtime import request_live_chat, request_live_checkout, request_live_image
 from .schemas import (
     AuthSessionResponse,
     BillingPlanResponse,
@@ -44,6 +47,10 @@ from .schemas import (
     ImageGenerateRequest,
     ImageGenerateResponse,
     LoginRequest,
+    PartySessionActionRequest,
+    PartySessionCreateRequest,
+    PartySessionJoinRequest,
+    PartySessionResponse,
     PartyResolveRequest,
     PartyResolveResponse,
     RegisterRequest,
@@ -89,14 +96,14 @@ def health() -> HealthResponse:
 @app.post("/auth/register", response_model=AuthSessionResponse)
 def auth_register(payload: RegisterRequest) -> AuthSessionResponse:
     try:
-      user = create_user(
-          name=payload.name,
-          email=payload.email,
-          password=payload.password,
-          role=payload.role,
-      )
+        user = create_user(
+            name=payload.name,
+            email=payload.email,
+            password=payload.password,
+            role=payload.role,
+        )
     except IntegrityError as exc:
-      raise HTTPException(status_code=409, detail="Email already exists") from exc
+        raise HTTPException(status_code=409, detail="Email already exists") from exc
 
     session = create_auth_session(user["id"])
     return AuthSessionResponse.model_validate(
@@ -148,6 +155,16 @@ def create_session(payload: SessionRequest) -> AuthSessionResponse:
     )
 
 
+@app.delete("/auth/session")
+def delete_session(authorization: str | None = Header(default=None)) -> dict[str, str]:
+    token = _resolve_bearer_token(authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing token")
+    if not revoke_auth_session(token):
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"status": "revoked"}
+
+
 @app.get("/catalog/feed")
 def feed(query: str | None = Query(default=None, alias="q")) -> list[dict]:
     return list_feed(query)
@@ -194,6 +211,27 @@ def characters() -> list[dict]:
 
 @app.post("/chat/respond", response_model=ChatResponse)
 def chat_respond(payload: ChatRequest) -> ChatResponse:
+    characters = {character["id"]: character for character in list_characters()}
+    active_character = characters.get(payload.character_id)
+    live_response = None
+    if active_character is not None:
+        live_response = request_live_chat(
+            character_id=payload.character_id,
+            character_name=active_character["name"],
+            message=payload.message,
+            turn_index=payload.turn_index,
+        )
+
+    if live_response is not None:
+        return ChatResponse.model_validate(
+            {
+                "characterId": payload.character_id,
+                "characterName": active_character["name"],
+                "reply": live_response["reply"],
+                "tone": live_response["tone"],
+            }
+        )
+
     response = build_chat_reply(payload.character_id, payload.message, payload.turn_index)
     if response is None:
         raise HTTPException(status_code=404, detail="Character not found")
@@ -225,6 +263,68 @@ def party_resolve(payload: PartyResolveRequest) -> PartyResolveResponse:
     )
 
 
+@app.post("/party/sessions", response_model=PartySessionResponse)
+async def party_create_session(payload: PartySessionCreateRequest) -> PartySessionResponse:
+    session = party_sessions.create_session(
+        scenario_id=payload.scenario_id,
+        participant_name=payload.participant_name,
+        user_id=payload.user_id,
+    )
+    if session is None:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    return PartySessionResponse.model_validate(session)
+
+
+@app.post("/party/sessions/join", response_model=PartySessionResponse)
+async def party_join_session(payload: PartySessionJoinRequest) -> PartySessionResponse:
+    session = party_sessions.join_session(
+        invite_code=payload.invite_code,
+        participant_name=payload.participant_name,
+        user_id=payload.user_id,
+    )
+    if session is None:
+        raise HTTPException(status_code=404, detail="Party session not found")
+    await party_sessions.broadcast_snapshot(session["sessionId"])
+    return PartySessionResponse.model_validate(session)
+
+
+@app.get("/party/sessions/{session_id}", response_model=PartySessionResponse)
+def party_get_session(session_id: str) -> PartySessionResponse:
+    session = party_sessions.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Party session not found")
+    return PartySessionResponse.model_validate(session)
+
+
+@app.post("/party/sessions/{session_id}/actions", response_model=PartySessionResponse)
+async def party_session_action(
+    session_id: str,
+    payload: PartySessionActionRequest,
+) -> PartySessionResponse:
+    session = party_sessions.add_action(
+        session_id=session_id,
+        participant_id=payload.participant_id,
+        action=payload.action,
+    )
+    if session is None:
+        raise HTTPException(status_code=404, detail="Party session not found")
+    await party_sessions.broadcast_snapshot(session_id)
+    return PartySessionResponse.model_validate(session)
+
+
+@app.websocket("/party/ws/{session_id}")
+async def party_socket(websocket: WebSocket, session_id: str) -> None:
+    connected = await party_sessions.connect(session_id, websocket)
+    if not connected:
+        return
+
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        party_sessions.disconnect(session_id, websocket)
+
+
 @app.get("/studio/styles")
 def studio_styles() -> list[dict]:
     return list_image_styles()
@@ -232,6 +332,28 @@ def studio_styles() -> list[dict]:
 
 @app.post("/studio/generate", response_model=ImageGenerateResponse)
 def studio_generate(payload: ImageGenerateRequest) -> ImageGenerateResponse:
+    styles = {style["id"]: style for style in list_image_styles()}
+    active_style = styles.get(payload.style_id)
+    live_response = None
+    if active_style is not None:
+        live_response = request_live_image(
+            prompt=payload.prompt,
+            style_id=payload.style_id,
+            style_name=active_style["name"],
+            index=payload.index,
+        )
+
+    if live_response is not None:
+        return ImageGenerateResponse.model_validate(
+            {
+                "title": live_response["title"],
+                "prompt": live_response["prompt"],
+                "styleId": live_response["style_id"],
+                "tagline": live_response["tagline"],
+                "gradient": live_response["gradient"] or active_style["gradient"],
+            }
+        )
+
     response = generate_image_shot(payload.prompt, payload.style_id, payload.index)
     if response is None:
         raise HTTPException(status_code=404, detail="Style not found")
@@ -340,6 +462,15 @@ def billing_subscriptions(
 
 @app.post("/billing/checkout", response_model=CheckoutResponse)
 def billing_checkout(payload: CheckoutRequest) -> CheckoutResponse:
+    live_checkout = request_live_checkout(
+        user_id=payload.user_id,
+        plan_id=payload.plan_id,
+        sku=payload.sku,
+        category=payload.category,
+        amount=payload.amount,
+        currency=payload.currency,
+    )
+
     try:
         result = create_checkout(
             user_id=payload.user_id,
@@ -348,6 +479,7 @@ def billing_checkout(payload: CheckoutRequest) -> CheckoutResponse:
             category=payload.category,
             amount=payload.amount,
             currency=payload.currency,
+            status="paid" if live_checkout is None else live_checkout["status"],
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -356,9 +488,11 @@ def billing_checkout(payload: CheckoutRequest) -> CheckoutResponse:
         {
             "purchaseId": result["purchase_id"],
             "subscriptionId": result["subscription_id"],
-            "status": result["status"],
+            "status": live_checkout["status"] if live_checkout is not None else result["status"],
             "planId": result["plan_id"],
             "renewalAt": result["renewal_at"],
+            "checkoutUrl": None if live_checkout is None else live_checkout["checkout_url"],
+            "provider": None if live_checkout is None else live_checkout["provider"],
         }
     )
 

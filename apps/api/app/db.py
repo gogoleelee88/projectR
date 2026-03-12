@@ -778,6 +778,7 @@ def create_checkout(
     category: str,
     amount: int,
     currency: str = "KRW",
+    status: str = "paid",
 ) -> dict:
     purchase_id = str(uuid4())
     subscription_id = str(uuid4())
@@ -798,25 +799,33 @@ def create_checkout(
             INSERT INTO purchases (id, user_id, sku, category, amount, currency, status, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (purchase_id, user_id, sku, category, amount, currency, "paid", created_at),
+            (purchase_id, user_id, sku, category, amount, currency, status, created_at),
         )
         connection.execute(
             """
             INSERT INTO subscriptions (id, user_id, plan_id, status, renewal_at, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (subscription_id, user_id, plan_id, "active", renewal_at, created_at),
+            (
+                subscription_id,
+                user_id,
+                plan_id,
+                "active" if status == "paid" else status,
+                renewal_at,
+                created_at,
+            ),
         )
-        connection.execute(
-            "UPDATE users SET membership = ? WHERE id = ?",
-            (plan["name"], user_id),
-        )
+        if status == "paid":
+            connection.execute(
+                "UPDATE users SET membership = ? WHERE id = ?",
+                (plan["name"], user_id),
+            )
         connection.commit()
 
     return {
         "purchase_id": purchase_id,
         "subscription_id": subscription_id,
-        "status": "paid",
+        "status": status,
         "plan_id": plan_id,
         "renewal_at": renewal_at,
     }
@@ -948,6 +957,16 @@ def get_user_by_token(token: str) -> dict | None:
             (token, utc_now()),
         ).fetchone()
         return _public_user(row) if row is not None else None
+
+
+def revoke_auth_session(token: str) -> bool:
+    with get_connection() as connection:
+        cursor = connection.execute(
+            "DELETE FROM auth_sessions WHERE token = ?",
+            (token,),
+        )
+        connection.commit()
+        return cursor.rowcount > 0
 
 
 def list_preset_users() -> list[dict]:

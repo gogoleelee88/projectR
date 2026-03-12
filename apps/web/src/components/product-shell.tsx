@@ -5,6 +5,7 @@ import {
   useDeferredValue,
   useEffect,
   useEffectEvent,
+  useRef,
   useState,
 } from "react";
 import { useSearchParams } from "next/navigation";
@@ -78,6 +79,8 @@ type CheckoutPayload = {
   status: string;
   planId: string;
   renewalAt: string;
+  checkoutUrl?: string | null;
+  provider?: string;
 };
 
 type ProductShellProps = {
@@ -101,7 +104,35 @@ type Snapshot = {
   creatorReleases: CreatorRelease[];
 };
 
+type AuthMode = "login" | "register";
+
+type PartyParticipant = {
+  id: string;
+  name: string;
+  role: string;
+};
+
+type PartyRealtimeLogEntry = {
+  id: string;
+  actorName: string;
+  action: string;
+  summary: string;
+  createdAt: string;
+};
+
+type PartyRealtimeSession = {
+  sessionId: string;
+  inviteCode: string;
+  scenarioId: string;
+  scenarioTitle: string;
+  status: string;
+  participants: PartyParticipant[];
+  log: PartyRealtimeLogEntry[];
+  participantId?: string | null;
+};
+
 const STORAGE_KEY = "projectr.product-shell.v2";
+const AUTH_TOKEN_KEY = "projectr.auth-token.v1";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 const FALLBACK_BOOTSTRAP: BootstrapPayload = {
   presets: userPresets,
@@ -229,6 +260,10 @@ async function requestApi<T>(path: string, init?: RequestInit): Promise<T | null
       return null;
     }
 
+    if (response.status === 204) {
+      return null;
+    }
+
     return (await response.json()) as T;
   } catch {
     return null;
@@ -241,10 +276,17 @@ export function ProductShell({
 }: ProductShellProps) {
   const initialBootstrap = resolveBootstrap(initialData);
   const searchParams = useSearchParams();
+  const partySocketRef = useRef<WebSocket | null>(null);
   const [hydrated, setHydrated] = useState(false);
-  const [session, setSession] = useState<SessionState | null>(
-    createSession(initialBootstrap.presets[0]),
-  );
+  const [session, setSession] = useState<SessionState | null>(null);
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  const [authMode, setAuthMode] = useState<AuthMode>("login");
+  const [authName, setAuthName] = useState("");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authRole, setAuthRole] = useState<SessionState["role"]>("player");
+  const [authMessage, setAuthMessage] = useState("");
+  const [authPending, setAuthPending] = useState(false);
   const [activeView, setActiveView] = useState<ProductView>("discover");
   const [apiStatus, setApiStatus] = useState<"checking" | "online" | "offline">(
     initialApiStatus,
@@ -291,6 +333,13 @@ export function ProductShell({
       initialBootstrap.plans[0].id,
   );
   const [billingMessage, setBillingMessage] = useState("");
+  const [partyParticipantName, setPartyParticipantName] = useState("");
+  const [partyInviteCodeInput, setPartyInviteCodeInput] = useState("");
+  const [partySession, setPartySession] = useState<PartyRealtimeSession | null>(null);
+  const [partyConnection, setPartyConnection] = useState<
+    "idle" | "connecting" | "live" | "offline"
+  >("idle");
+  const [partyMessage, setPartyMessage] = useState("");
   const deferredSearch = useDeferredValue(discoverSearch);
 
   const applyBootstrapPayload = useEffectEvent((payload: BootstrapPayload) => {
@@ -330,6 +379,7 @@ export function ProductShell({
 
   useEffect(() => {
     const raw = window.localStorage.getItem(STORAGE_KEY);
+    const storedToken = window.localStorage.getItem(AUTH_TOKEN_KEY);
 
     if (raw) {
       try {
@@ -368,8 +418,25 @@ export function ProductShell({
       }
     }
 
+    if (storedToken) {
+      setAuthToken(storedToken);
+    }
+
     setHydrated(true);
   }, []);
+
+  useEffect(() => {
+    if (!hydrated) {
+      return;
+    }
+
+    if (authToken) {
+      window.localStorage.setItem(AUTH_TOKEN_KEY, authToken);
+      return;
+    }
+
+    window.localStorage.removeItem(AUTH_TOKEN_KEY);
+  }, [authToken, hydrated]);
 
   useEffect(() => {
     if (!hydrated) {
@@ -425,6 +492,41 @@ export function ProductShell({
   }, [searchParams]);
 
   useEffect(() => {
+    if (!hydrated || !authToken) {
+      return;
+    }
+
+    let alive = true;
+
+    const restoreAuthSession = async () => {
+      const me = await requestApi<SessionState>("/auth/me", {
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+        },
+      });
+
+      if (!alive) {
+        return;
+      }
+
+      if (!me) {
+        setAuthToken(null);
+        setSession(null);
+        return;
+      }
+
+      setSession(me);
+      setPartyParticipantName((current) => current || me.name);
+    };
+
+    void restoreAuthSession();
+
+    return () => {
+      alive = false;
+    };
+  }, [authToken, hydrated]);
+
+  useEffect(() => {
     if (!session) {
       return;
     }
@@ -435,6 +537,12 @@ export function ProductShell({
       setSelectedPlanId(matchingPlan.id);
     }
   }, [billingCatalog, session]);
+
+  useEffect(() => {
+    if (!partyParticipantName && session?.name) {
+      setPartyParticipantName(session.name);
+    }
+  }, [partyParticipantName, session?.name]);
 
   useEffect(() => {
     let alive = true;
@@ -518,10 +626,179 @@ export function ProductShell({
     },
   ];
 
+  const disconnectPartySocket = useEffectEvent(() => {
+    if (partySocketRef.current) {
+      partySocketRef.current.close();
+      partySocketRef.current = null;
+    }
+    setPartyConnection("idle");
+  });
+
+  const connectPartySocket = useEffectEvent(
+    (sessionId: string, knownParticipantId?: string | null) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (partySocketRef.current) {
+      partySocketRef.current.close();
+    }
+
+    const wsBase = API_BASE.startsWith("https://")
+      ? API_BASE.replace("https://", "wss://")
+      : API_BASE.replace("http://", "ws://");
+
+    try {
+      setPartyConnection("connecting");
+      const socket = new window.WebSocket(`${wsBase}/party/ws/${sessionId}`);
+      partySocketRef.current = socket;
+
+      socket.onopen = () => {
+        setPartyConnection("live");
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data) as {
+            type?: string;
+            session?: PartyRealtimeSession;
+          };
+          const liveSession = payload.session;
+          if (!liveSession) {
+            return;
+          }
+
+          setPartySession((current) => ({
+            ...liveSession,
+            participantId:
+              knownParticipantId ??
+              (current?.sessionId === liveSession.sessionId
+                ? current.participantId ?? liveSession.participantId
+                : liveSession.participantId),
+          }));
+          setSelectedPartyId(liveSession.scenarioId);
+        } catch {
+          setPartyConnection("offline");
+        }
+      };
+
+      socket.onerror = () => {
+        setPartyConnection("offline");
+      };
+
+      socket.onclose = () => {
+        setPartyConnection((current) => (current === "idle" ? current : "offline"));
+      };
+    } catch {
+      setPartyConnection("offline");
+    }
+    },
+  );
+
+  const clearLiveParty = () => {
+    disconnectPartySocket();
+    setPartySession(null);
+    setPartyMessage("");
+  };
+
+  useEffect(() => {
+    return () => {
+      disconnectPartySocket();
+    };
+  }, [disconnectPartySocket]);
+
   const changeView = (view: ProductView) => {
     startTransition(() => {
       setActiveView(view);
     });
+  };
+
+  const routeRoleHome = (role: SessionState["role"]) => {
+    if (role === "creator") {
+      changeView("creator");
+      return;
+    }
+
+    if (role === "operator") {
+      changeView("ops");
+      return;
+    }
+
+    changeView("discover");
+  };
+
+  const submitAuth = async () => {
+    const email = authEmail.trim().toLowerCase();
+    const password = authPassword.trim();
+    const name = authName.trim();
+
+    if (!email || !password || (authMode === "register" && !name)) {
+      setAuthMessage("이름, 이메일, 비밀번호를 모두 입력해 주세요.");
+      return;
+    }
+
+    setAuthPending(true);
+    setAuthMessage("");
+
+    const payload =
+      authMode === "register"
+        ? {
+            name,
+            email,
+            password,
+            role: authRole,
+          }
+        : {
+            email,
+            password,
+          };
+
+    const response = await requestApi<AuthSessionPayload>(
+      authMode === "register" ? "/auth/register" : "/auth/login",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+
+    setAuthPending(false);
+
+    if (!response) {
+      setAuthMessage(
+        authMode === "register"
+          ? "회원가입에 실패했습니다. 이미 사용 중인 이메일인지 확인해 주세요."
+          : "로그인에 실패했습니다. 이메일과 비밀번호를 확인해 주세요.",
+      );
+      return;
+    }
+
+    setAuthToken(response.token);
+    setSession(response.user);
+    setPartyParticipantName(response.user.name);
+    setAuthMessage(
+      authMode === "register"
+        ? `${response.user.name} 계정이 생성되었습니다.`
+        : `${response.user.name} 계정으로 로그인했습니다.`,
+    );
+    setAuthPassword("");
+    routeRoleHome(response.user.role);
+  };
+
+  const logoutSession = async () => {
+    if (authToken) {
+      await requestApi("/auth/session", {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+        },
+      });
+    }
+
+    setAuthToken(null);
+    setSession(null);
+    setAuthMessage("로그아웃되었습니다.");
+    setBillingMessage("");
+    clearLiveParty();
   };
 
   const activatePreset = async (preset: UserPreset) => {
@@ -531,20 +808,11 @@ export function ProductShell({
     });
 
     const nextSession = remoteSession?.user ?? createSession(preset);
+    setAuthToken(remoteSession?.token ?? null);
     setSession(nextSession);
+    setPartyParticipantName(nextSession.name);
     setBillingMessage("");
-
-    if (preset.role === "creator") {
-      changeView("creator");
-      return;
-    }
-
-    if (preset.role === "operator") {
-      changeView("ops");
-      return;
-    }
-
-    changeView("discover");
+    routeRoleHome(preset.role);
   };
 
   const chooseStory = async (choiceId: string) => {
@@ -680,6 +948,25 @@ export function ProductShell({
   };
 
   const resolveParty = async (action: string) => {
+    if (partySession?.participantId && partySession.sessionId) {
+      const remoteSession = await requestApi<PartyRealtimeSession>(
+        `/party/sessions/${partySession.sessionId}/actions`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            participantId: partySession.participantId,
+            action,
+          }),
+        },
+      );
+
+      if (remoteSession) {
+        setPartySession(remoteSession);
+        setPartyMessage(`"${action}" 액션이 룸에 반영되었습니다.`);
+        return;
+      }
+    }
+
     const remoteResolution = await requestApi<{
       scenarioId: string;
       summary: string;
@@ -834,6 +1121,62 @@ export function ProductShell({
     setDraftPitch("");
   };
 
+  const createLiveParty = async () => {
+    const participantName = partyParticipantName.trim() || session?.name;
+
+    if (!participantName) {
+      setPartyMessage("파티 참가 이름을 먼저 입력해 주세요.");
+      return;
+    }
+
+    const response = await requestApi<PartyRealtimeSession>("/party/sessions", {
+      method: "POST",
+      body: JSON.stringify({
+        scenarioId: activeParty.id,
+        participantName,
+        userId: session?.id ?? null,
+      }),
+    });
+
+    if (!response) {
+      setPartyMessage("라이브 파티 룸을 만들지 못했습니다.");
+      return;
+    }
+
+    setPartySession(response);
+    setPartyMessage(`초대 코드 ${response.inviteCode}로 참가자를 초대할 수 있습니다.`);
+    connectPartySocket(response.sessionId, response.participantId);
+  };
+
+  const joinLiveParty = async () => {
+    const inviteCode = partyInviteCodeInput.trim().toUpperCase();
+    const participantName = partyParticipantName.trim() || session?.name;
+
+    if (!inviteCode || !participantName) {
+      setPartyMessage("초대 코드와 참가 이름을 입력해 주세요.");
+      return;
+    }
+
+    const response = await requestApi<PartyRealtimeSession>("/party/sessions/join", {
+      method: "POST",
+      body: JSON.stringify({
+        inviteCode,
+        participantName,
+        userId: session?.id ?? null,
+      }),
+    });
+
+    if (!response) {
+      setPartyMessage("파티 룸에 참가하지 못했습니다. 초대 코드를 확인해 주세요.");
+      return;
+    }
+
+    setPartySession(response);
+    setSelectedPartyId(response.scenarioId);
+    setPartyMessage(`${response.scenarioTitle} 룸에 참가했습니다.`);
+    connectPartySocket(response.sessionId, response.participantId);
+  };
+
   const checkoutPlan = async (plan: BillingPlan) => {
     if (!session) {
       setBillingMessage("먼저 로그인한 뒤 멤버십을 시작할 수 있습니다.");
@@ -870,14 +1213,20 @@ export function ProductShell({
       return;
     }
 
-    setSession((current) =>
-      current
-        ? {
-            ...current,
-            membership: plan.name,
-          }
-        : current,
-    );
+    if (checkout.checkoutUrl && typeof window !== "undefined") {
+      window.open(checkout.checkoutUrl, "_blank", "noopener,noreferrer");
+    }
+
+    if (checkout.status === "paid") {
+      setSession((current) =>
+        current
+          ? {
+              ...current,
+              membership: plan.name,
+            }
+          : current,
+      );
+    }
 
     const remoteBootstrap = await requestApi<BootstrapPayload>(
       `/bootstrap?userId=${encodeURIComponent(session.id)}`,
@@ -896,9 +1245,11 @@ export function ProductShell({
     }
 
     setBillingMessage(
-      `${plan.name} 결제가 완료되었습니다. 다음 갱신일 ${new Date(
-        checkout.renewalAt,
-      ).toLocaleDateString("ko-KR")}`,
+      `${
+        checkout.status === "paid" ? `${plan.name} 결제가 완료되었습니다.` : `${plan.name} 결제가 ${checkout.status} 상태입니다.`
+      }${
+        checkout.provider ? ` (${checkout.provider})` : ""
+      } 다음 갱신일 ${new Date(checkout.renewalAt).toLocaleDateString("ko-KR")}`,
     );
   };
 
@@ -931,6 +1282,91 @@ export function ProductShell({
           <div className="mt-4 inline-flex rounded-full border border-white/10 px-3 py-2 text-xs text-white/72">
             API {apiStatus}
           </div>
+          {session?.email && (
+            <div className="mt-3 text-xs text-white/52">{session.email}</div>
+          )}
+          {session && (
+            <button
+              type="button"
+              onClick={() => {
+                void logoutSession();
+              }}
+              className="mt-4 w-full rounded-full border border-white/10 px-4 py-3 text-sm text-white/76"
+            >
+              로그아웃
+            </button>
+          )}
+        </div>
+
+        <div className="rounded-[1.6rem] border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm uppercase tracking-[0.2em] text-white/54">
+              Account
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode((current) => (current === "login" ? "register" : "login"));
+                setAuthMessage("");
+              }}
+              className="text-xs text-[var(--highlight)]"
+            >
+              {authMode === "login" ? "회원가입" : "로그인"}
+            </button>
+          </div>
+          <div className="mt-3 space-y-3">
+            {authMode === "register" && (
+              <>
+                <input
+                  value={authName}
+                  onChange={(event) => setAuthName(event.target.value)}
+                  placeholder="이름"
+                  className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none"
+                />
+                <select
+                  value={authRole}
+                  onChange={(event) => setAuthRole(event.target.value as SessionState["role"])}
+                  className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none"
+                >
+                  <option value="player">Player</option>
+                  <option value="creator">Creator</option>
+                  <option value="operator">Operator</option>
+                </select>
+              </>
+            )}
+            <input
+              value={authEmail}
+              onChange={(event) => setAuthEmail(event.target.value)}
+              placeholder="이메일"
+              className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none"
+            />
+            <input
+              type="password"
+              value={authPassword}
+              onChange={(event) => setAuthPassword(event.target.value)}
+              placeholder="비밀번호"
+              className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                void submitAuth();
+              }}
+              disabled={authPending}
+              className="w-full rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-[#130e09] disabled:opacity-50"
+            >
+              {authPending
+                ? "처리 중..."
+                : authMode === "login"
+                  ? "이메일 로그인"
+                  : "계정 만들기"}
+            </button>
+          </div>
+          {authMessage && (
+            <div className="mt-3 rounded-2xl bg-black/20 px-4 py-3 text-sm text-white/76">
+              {authMessage}
+            </div>
+          )}
         </div>
 
         <div className="space-y-2">
@@ -1370,6 +1806,9 @@ export function ProductShell({
                     key={scenario.id}
                     type="button"
                     onClick={() => {
+                      if (partySession && partySession.scenarioId !== scenario.id) {
+                        clearLiveParty();
+                      }
                       setSelectedPartyId(scenario.id);
                       setPartyRounds([]);
                     }}
@@ -1385,6 +1824,63 @@ export function ProductShell({
                     </p>
                   </button>
                 ))}
+              </div>
+
+              <div className="mt-4 rounded-[1.6rem] border border-white/10 bg-black/20 p-4">
+                <div className="text-sm uppercase tracking-[0.18em] text-white/54">
+                  Live Session
+                </div>
+                <div className="mt-3 space-y-3">
+                  <input
+                    value={partyParticipantName}
+                    onChange={(event) => setPartyParticipantName(event.target.value)}
+                    placeholder="참가 이름"
+                    className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none"
+                  />
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void createLiveParty();
+                      }}
+                      className="rounded-full bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-[#130e09]"
+                    >
+                      룸 만들기
+                    </button>
+                    <input
+                      value={partyInviteCodeInput}
+                      onChange={(event) => setPartyInviteCodeInput(event.target.value.toUpperCase())}
+                      placeholder="초대 코드"
+                      className="rounded-full border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void joinLiveParty();
+                    }}
+                    className="w-full rounded-full border border-white/10 px-4 py-3 text-sm text-white/78"
+                  >
+                    초대 코드로 참가
+                  </button>
+                  <div className="inline-flex rounded-full border border-white/10 px-3 py-2 text-xs text-white/70">
+                    Realtime {partyConnection}
+                  </div>
+                  {partyMessage && (
+                    <div className="rounded-2xl bg-white/5 px-4 py-3 text-sm text-white/72">
+                      {partyMessage}
+                    </div>
+                  )}
+                  {partySession && (
+                    <button
+                      type="button"
+                      onClick={clearLiveParty}
+                      className="w-full rounded-full border border-white/10 px-4 py-3 text-sm text-white/70"
+                    >
+                      라이브 룸 종료
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -1409,6 +1905,33 @@ export function ProductShell({
                     </span>
                   ))}
                 </div>
+                {partySession && partySession.scenarioId === activeParty.id && (
+                  <div className="mt-5 rounded-[1.6rem] border border-white/10 bg-black/20 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="text-xs uppercase tracking-[0.16em] text-white/54">
+                          Invite
+                        </div>
+                        <div className="mt-1 font-[family-name:var(--font-display)] text-2xl text-white">
+                          {partySession.inviteCode}
+                        </div>
+                      </div>
+                      <div className="text-sm text-white/58">
+                        {partySession.participants.length} participants
+                      </div>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {partySession.participants.map((participant) => (
+                        <span
+                          key={participant.id}
+                          className="rounded-full border border-white/10 px-3 py-2 text-xs text-white/72"
+                        >
+                          {participant.name} · {participant.role}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div className="mt-6 grid gap-3">
                   {activeParty.actions.map((action) => (
                     <button
@@ -1430,12 +1953,37 @@ export function ProductShell({
                   Resolution Log
                 </div>
                 <div className="mt-4 space-y-3">
-                  {partyRounds.length === 0 && (
+                  {partySession && partySession.log.length === 0 && (
+                    <div className="rounded-2xl border border-dashed border-white/12 px-4 py-5 text-sm text-white/52">
+                      라이브 참가자가 액션을 고르면 룸 로그가 여기 쌓입니다.
+                    </div>
+                  )}
+                  {!partySession && partyRounds.length === 0 && (
                     <div className="rounded-2xl border border-dashed border-white/12 px-4 py-5 text-sm text-white/52">
                       행동을 선택하면 AI 턴 결과 로그가 쌓입니다.
                     </div>
                   )}
-                  {partyRounds.map((round) => (
+                  {partySession?.log.map((round) => (
+                    <div
+                      key={round.id}
+                      className="rounded-[1.4rem] border border-white/8 bg-white/4 px-4 py-4"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="font-semibold text-white">{round.action}</div>
+                        <div className="text-xs text-white/48">
+                          {new Date(round.createdAt).toLocaleTimeString("ko-KR")}
+                        </div>
+                      </div>
+                      <div className="mt-2 text-xs uppercase tracking-[0.16em] text-[var(--highlight)]">
+                        {round.actorName}
+                      </div>
+                      <p className="mt-2 text-sm leading-7 text-white/66">
+                        {round.summary}
+                      </p>
+                    </div>
+                  ))}
+                  {!partySession &&
+                    partyRounds.map((round) => (
                     <div
                       key={round.id}
                       className="rounded-[1.4rem] border border-white/8 bg-white/4 px-4 py-4"
@@ -1445,7 +1993,7 @@ export function ProductShell({
                         {round.summary}
                       </p>
                     </div>
-                  ))}
+                    ))}
                 </div>
               </div>
             </div>
