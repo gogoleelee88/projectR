@@ -7,14 +7,25 @@ Project R is a dedicated repository for the next-generation Crack service. It is
 
 ## Product framing
 
-This baseline package turns the current Crack surface into a unified platform around:
+This repository now includes a locally usable product shell built around:
 
 - Story: world-scale interactive fiction where the user becomes the protagonist.
 - Character: short-form conversation loops optimized for fast emotional engagement.
 - Party Chat: synchronous multiplayer story rooms with AI-led turn resolution.
-- Image Studio: generation and in-chat scene rendering.
-- Creator Console: publishing, analytics, rewards, and store operations.
+- Image Studio: prompt-driven scene card generation for fast visual iteration.
+- Creator Console: publishing queue, pricing setup, and launch templates.
 - Safety and Memory: policy-aware generation, long-term memory, and moderation tooling.
+
+## What works now
+
+- Web landing plus a playable `/app` product shell
+- Discover feed with selectable flagship content
+- Story choice flow with progression log
+- Character chat flow with local response generation
+- Party room action resolution log
+- Image prompt studio with generated visual cards
+- Creator queue with release drafts and revenue projection
+- Mobile app with the same core tabs and local interaction loops
 
 ## Commands
 
@@ -39,6 +50,6 @@ Use Node `22.13.1` or newer. On this machine, `22.12.0` crashed `eslint`, `next 
 
 ## Next steps
 
-1. Connect real backend APIs for auth, feed, chat, image generation, and payments.
-2. Split the mobile shell into navigable tabs and native modules once backend contracts settle.
+1. Replace local state with real auth, feed, chat, image, and commerce APIs.
+2. Add persistent storage and syncing between web and mobile sessions.
 3. Add CI, visual regression checks, analytics, crash reporting, and release automation.

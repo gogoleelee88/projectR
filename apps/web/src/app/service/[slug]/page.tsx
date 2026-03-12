@@ -111,6 +111,25 @@ export default async function ServiceDetailPage({ params }: PageProps) {
         </div>
       </section>
 
+      <section className="rounded-[2rem] border border-white/10 bg-[rgba(255,255,255,0.04)] p-7">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="text-sm uppercase tracking-[0.2em] text-[var(--accent-soft)]">
+              Demo Jump
+            </div>
+            <p className="mt-2 text-sm leading-7 text-white/68">
+              이 모듈은 제품 모드에서 바로 체험할 수 있습니다.
+            </p>
+          </div>
+          <Link
+            href={`/app?module=${service.slug}`}
+            className="rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-[#130e09]"
+          >
+            {service.name} 체험하기
+          </Link>
+        </div>
+      </section>
+
       <section className="rounded-[2rem] border border-white/10 bg-[rgba(255,255,255,0.03)] p-7">
         <div className="text-sm uppercase tracking-[0.2em] text-white/54">
           Related Modules

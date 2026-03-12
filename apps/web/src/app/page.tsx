@@ -41,15 +41,21 @@ export default function Home() {
               초기 프로덕션 셸입니다.
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <Link
+                href="/app"
+                className="rounded-full bg-[var(--accent)] px-6 py-3 text-center text-sm font-semibold text-[#130e09] transition-transform hover:-translate-y-0.5"
+              >
+                라이브 제품 실행
+              </Link>
               <a
                 href="#services"
-                className="rounded-full bg-[var(--accent)] px-6 py-3 text-sm font-semibold text-[#130e09] transition-transform hover:-translate-y-0.5"
+                className="rounded-full border border-white/14 bg-white/6 px-6 py-3 text-center text-sm font-semibold text-white/86"
               >
                 서비스 맵 보기
               </a>
               <a
                 href="#release"
-                className="rounded-full border border-white/14 bg-white/6 px-6 py-3 text-sm font-semibold text-white/86"
+                className="rounded-full border border-white/14 bg-white/6 px-6 py-3 text-center text-sm font-semibold text-white/86"
               >
                 릴리즈 트랙 보기
               </a>
@@ -188,6 +194,29 @@ export default function Home() {
               <p className="mt-4 text-sm leading-7 text-white/64">{layer.summary}</p>
             </div>
           ))}
+        </section>
+
+        <section className="rounded-[2rem] border border-white/10 bg-[var(--surface)] p-7 lg:p-10">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div className="text-sm uppercase tracking-[0.2em] text-[var(--accent-soft)]">
+                Playable Now
+              </div>
+              <h2 className="mt-2 font-[family-name:var(--font-display)] text-3xl font-semibold text-white">
+                지금부터는 설명이 아니라 제품 흐름을 직접 만질 수 있다
+              </h2>
+              <p className="mt-3 max-w-2xl text-sm leading-7 text-white/68">
+                로그인 프리셋, 발견 피드, 스토리 분기, 캐릭터 채팅, 파티 세션,
+                이미지 장면 생성, 크리에이터 발행 대기열이 로컬 제품 모드로 동작합니다.
+              </p>
+            </div>
+            <Link
+              href="/app"
+              className="rounded-full bg-[var(--accent)] px-6 py-3 text-center text-sm font-semibold text-[#130e09]"
+            >
+              제품 모드 열기
+            </Link>
+          </div>
         </section>
 
         <section

@@ -33,8 +33,9 @@ The baseline implementation maps the currently visible Crack service shape into 
 
 ## What this repository includes now
 
-- A high-fidelity web landing and service hub
-- A mobile shell that demonstrates Android and iOS information architecture
+- A brand landing and service hub for the public-facing web
+- A locally interactive web product shell with discover, story, chat, party, studio, creator, and ops flows
+- A mobile app shell with matching discover, story, chat, studio, and creator tabs
 - Documentation that fixes repository intent and launch direction
 
 ## What is deliberately deferred
