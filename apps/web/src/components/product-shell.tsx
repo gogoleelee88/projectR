@@ -76,6 +76,7 @@ type Snapshot = {
 };
 
 const STORAGE_KEY = "projectr.product-shell.v2";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 const moduleToView: Record<string, ProductView> = {
   story: "story",
@@ -121,6 +122,26 @@ function createInitialChatState() {
   ) as Record<string, ChatMessage[]>;
 }
 
+async function requestApi<T>(path: string, init?: RequestInit): Promise<T | null> {
+  try {
+    const response = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers ?? {}),
+      },
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return (await response.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
 export function ProductShell() {
   const searchParams = useSearchParams();
   const [hydrated, setHydrated] = useState(false);
@@ -128,6 +149,11 @@ export function ProductShell() {
     createSession(userPresets[0]),
   );
   const [activeView, setActiveView] = useState<ProductView>("discover");
+  const [apiStatus, setApiStatus] = useState<"checking" | "online" | "offline">(
+    "checking",
+  );
+  const [feedWorks, setFeedWorks] = useState(featuredWorks);
+  const [opsBoard, setOpsBoard] = useState(opsSignals);
   const [discoverSearch, setDiscoverSearch] = useState("");
   const [selectedWorkId, setSelectedWorkId] = useState(featuredWorks[0].id);
   const [selectedCharacterId, setSelectedCharacterId] = useState(
@@ -231,7 +257,64 @@ export function ProductShell() {
     }
   }, [searchParams]);
 
-  const filteredWorks = featuredWorks.filter((work) => {
+  useEffect(() => {
+    let alive = true;
+
+    const bootstrapApi = async () => {
+      const health = await requestApi<{ status: string }>("/health");
+
+      if (!alive) {
+        return;
+      }
+
+      if (!health) {
+        setApiStatus("offline");
+        return;
+      }
+
+      setApiStatus("online");
+
+      const [remoteFeed, remoteOps, remoteReleases] = await Promise.all([
+        requestApi<typeof featuredWorks>("/catalog/feed"),
+        requestApi<typeof opsSignals>("/ops/signals"),
+        requestApi<CreatorRelease[]>("/creator/releases"),
+      ]);
+
+      if (!alive) {
+        return;
+      }
+
+      if (remoteFeed && remoteFeed.length > 0) {
+        setFeedWorks(remoteFeed);
+        setSelectedWorkId((current) =>
+          remoteFeed.some((work) => work.id === current) ? current : remoteFeed[0].id,
+        );
+      }
+
+      if (remoteOps && remoteOps.length > 0) {
+        setOpsBoard(remoteOps);
+      }
+
+      if (remoteReleases) {
+        setCreatorReleases(
+          remoteReleases.map((release) => ({
+            ...release,
+            projection:
+              "projection" in release ? release.projection : "월 수익 예측 준비 중",
+            status: "status" in release ? release.status : "심사 대기",
+          })),
+        );
+      }
+    };
+
+    void bootstrapApi();
+
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const filteredWorks = feedWorks.filter((work) => {
     const query = deferredSearch.trim().toLowerCase();
 
     if (!query) {
@@ -244,8 +327,7 @@ export function ProductShell() {
       .includes(query);
   });
 
-  const selectedWork =
-    featuredWorks.find((work) => work.id === selectedWorkId) ?? featuredWorks[0];
+  const selectedWork = feedWorks.find((work) => work.id === selectedWorkId) ?? feedWorks[0];
   const activeEpisode = storyEpisodes[Math.min(storyIndex, storyEpisodes.length - 1)];
   const activeCharacter =
     characterProfiles.find((character) => character.id === selectedCharacterId) ??
@@ -284,8 +366,13 @@ export function ProductShell() {
     });
   };
 
-  const activatePreset = (preset: UserPreset) => {
-    setSession(createSession(preset));
+  const activatePreset = async (preset: UserPreset) => {
+    const remoteSession = await requestApi<SessionState>("/auth/session", {
+      method: "POST",
+      body: JSON.stringify({ presetId: preset.id }),
+    });
+
+    setSession(remoteSession ?? createSession(preset));
 
     if (preset.role === "creator") {
       changeView("creator");
@@ -300,10 +387,45 @@ export function ProductShell() {
     changeView("discover");
   };
 
-  const chooseStory = (choiceId: string) => {
+  const chooseStory = async (choiceId: string) => {
     const choice = activeEpisode.choices.find((entry) => entry.id === choiceId);
 
     if (!choice) {
+      return;
+    }
+
+    const remoteResult = await requestApi<{
+      title: string;
+      detail: string;
+      trustScore: number;
+      hypeScore: number;
+      nextEpisodeId: string;
+    }>("/story/advance", {
+      method: "POST",
+      body: JSON.stringify({
+        episodeId: activeEpisode.id,
+        choiceId: choice.id,
+        trustScore,
+        hypeScore,
+      }),
+    });
+
+    if (remoteResult) {
+      setTrustScore(remoteResult.trustScore);
+      setHypeScore(remoteResult.hypeScore);
+      setStoryLogs((current) => [
+        ...current,
+        {
+          title: remoteResult.title,
+          detail: remoteResult.detail,
+        },
+      ]);
+      setStoryIndex((current) => {
+        const nextIndex = storyEpisodes.findIndex(
+          (episode) => episode.id === remoteResult.nextEpisodeId,
+        );
+        return nextIndex >= 0 ? nextIndex : current;
+      });
       return;
     }
 
@@ -328,10 +450,45 @@ export function ProductShell() {
     setStoryLogs(createInitialStoryLogs());
   };
 
-  const sendChat = () => {
+  const sendChat = async () => {
     const message = chatDraft.trim();
 
     if (!message) {
+      return;
+    }
+
+    const remoteReply = await requestApi<{
+      characterId: string;
+      characterName: string;
+      reply: string;
+      tone: string;
+    }>("/chat/respond", {
+      method: "POST",
+      body: JSON.stringify({
+        characterId: selectedCharacterId,
+        message,
+        turnIndex: activeChat.length,
+      }),
+    });
+
+    if (remoteReply) {
+      setChatMessages((current) => ({
+        ...current,
+        [selectedCharacterId]: [
+          ...(current[selectedCharacterId] ?? []),
+          {
+            id: `user-${Date.now()}`,
+            sender: "user",
+            text: message,
+          },
+          {
+            id: `character-${Date.now() + 1}`,
+            sender: "character",
+            text: remoteReply.reply,
+          },
+        ],
+      }));
+      setChatDraft("");
       return;
     }
 
@@ -364,7 +521,31 @@ export function ProductShell() {
     setChatDraft("");
   };
 
-  const resolveParty = (action: string) => {
+  const resolveParty = async (action: string) => {
+    const remoteResolution = await requestApi<{
+      scenarioId: string;
+      summary: string;
+    }>("/party/resolve", {
+      method: "POST",
+      body: JSON.stringify({
+        scenarioId: activeParty.id,
+        action,
+        turnIndex: partyRounds.length,
+      }),
+    });
+
+    if (remoteResolution) {
+      setPartyRounds((current) => [
+        ...current,
+        {
+          id: `${Date.now()}-${current.length}`,
+          action,
+          summary: remoteResolution.summary,
+        },
+      ]);
+      return;
+    }
+
     const twist = activeParty.twists[partyRounds.length % activeParty.twists.length];
     const role = activeParty.playerRoles[partyRounds.length % activeParty.playerRoles.length];
     const summary = `${role} 포지션으로 "${action}"을 선택했습니다. ${twist}`;
@@ -379,10 +560,41 @@ export function ProductShell() {
     ]);
   };
 
-  const generateShot = () => {
+  const generateShot = async () => {
     const prompt = imagePrompt.trim();
 
     if (!prompt) {
+      return;
+    }
+
+    const remoteShot = await requestApi<{
+      title: string;
+      prompt: string;
+      styleId: string;
+      tagline: string;
+    }>("/studio/generate", {
+      method: "POST",
+      body: JSON.stringify({
+        prompt,
+        styleId: activeStyle.id,
+        index: generatedShots.length,
+      }),
+    });
+
+    if (remoteShot) {
+      startTransition(() => {
+        setGeneratedShots((current) => [
+          {
+            id: `${Date.now()}`,
+            title: remoteShot.title,
+            prompt: remoteShot.prompt,
+            styleId: remoteShot.styleId,
+            tagline: remoteShot.tagline,
+          },
+          ...current,
+        ]);
+      });
+      setImagePrompt("");
       return;
     }
 
@@ -402,11 +614,50 @@ export function ProductShell() {
     setImagePrompt("");
   };
 
-  const publishRelease = () => {
+  const publishRelease = async () => {
     const title = draftTitle.trim();
     const pitch = draftPitch.trim();
 
     if (!title || !pitch) {
+      return;
+    }
+
+    const remoteRelease = await requestApi<{
+      id: string;
+      title: string;
+      module: string;
+      pitch: string;
+      price: number;
+      projection: string;
+      status: string;
+    }>("/creator/releases", {
+      method: "POST",
+      body: JSON.stringify({
+        title,
+        module: draftModule,
+        pitch,
+        price: Number(draftPrice),
+      }),
+    });
+
+    if (remoteRelease) {
+      startTransition(() => {
+        setCreatorReleases((current) => [
+          {
+            id: remoteRelease.id,
+            title: remoteRelease.title,
+            module: remoteRelease.module,
+            pitch: remoteRelease.pitch,
+            price: `${remoteRelease.price}`,
+            projection: remoteRelease.projection,
+            status: remoteRelease.status,
+          },
+          ...current,
+        ]);
+      });
+
+      setDraftTitle("");
+      setDraftPitch("");
       return;
     }
 
@@ -457,6 +708,9 @@ export function ProductShell() {
           <div className="mt-4 rounded-2xl bg-black/20 px-4 py-3 text-sm text-white/76">
             {session?.focus ?? "로그인하면 역할별 플로우로 바로 이동합니다."}
           </div>
+          <div className="mt-4 inline-flex rounded-full border border-white/10 px-3 py-2 text-xs text-white/72">
+            API {apiStatus}
+          </div>
         </div>
 
         <div className="space-y-2">
@@ -486,7 +740,9 @@ export function ProductShell() {
               <button
                 key={preset.id}
                 type="button"
-                onClick={() => activatePreset(preset)}
+                onClick={() => {
+                  void activatePreset(preset);
+                }}
                 className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left"
               >
                 <div className="flex items-center justify-between gap-3">
@@ -667,7 +923,9 @@ export function ProductShell() {
                   <button
                     key={choice.id}
                     type="button"
-                    onClick={() => chooseStory(choice.id)}
+                    onClick={() => {
+                      void chooseStory(choice.id);
+                    }}
                     className="rounded-[1.4rem] border border-white/10 bg-[rgba(255,255,255,0.04)] px-5 py-4 text-left transition hover:border-[var(--accent)]"
                   >
                     <div className="font-semibold text-white">{choice.label}</div>
@@ -798,7 +1056,9 @@ export function ProductShell() {
                 />
                 <button
                   type="button"
-                  onClick={sendChat}
+                  onClick={() => {
+                    void sendChat();
+                  }}
                   className="rounded-[1.4rem] bg-[var(--accent)] px-5 py-4 text-sm font-semibold text-[#130e09] md:w-36"
                 >
                   전송
@@ -864,7 +1124,9 @@ export function ProductShell() {
                     <button
                       key={action}
                       type="button"
-                      onClick={() => resolveParty(action)}
+                      onClick={() => {
+                        void resolveParty(action);
+                      }}
                       className="rounded-[1.4rem] border border-white/10 bg-white/5 px-4 py-4 text-left text-sm text-white/78"
                     >
                       {action}
@@ -935,7 +1197,9 @@ export function ProductShell() {
               </div>
               <button
                 type="button"
-                onClick={generateShot}
+                onClick={() => {
+                  void generateShot();
+                }}
                 className="mt-5 rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-[#130e09]"
               >
                 장면 생성
@@ -1025,7 +1289,9 @@ export function ProductShell() {
                 </div>
                 <button
                   type="button"
-                  onClick={publishRelease}
+                  onClick={() => {
+                    void publishRelease();
+                  }}
                   className="mt-5 rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-[#130e09]"
                 >
                   발행 큐에 추가
@@ -1117,7 +1383,7 @@ export function ProductShell() {
                 라이브 운영과 세이프티를 위한 관제 화면
               </h2>
               <div className="mt-5 grid gap-3">
-                {opsSignals.map((signal) => (
+                {opsBoard.map((signal) => (
                   <div
                     key={signal.label}
                     className="rounded-[1.4rem] border border-white/10 bg-white/5 px-4 py-4"

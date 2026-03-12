@@ -6,8 +6,12 @@ apps/web/.vercel/
 apps/mobile/.expo/
 apps/mobile/dist/
 apps/mobile/web-build/
+apps/api/.venv/
+apps/api/data/
+apps/api/app/__pycache__/
 *.log
 *.tsbuildinfo
+.pyc
 .DS_Store
 Thumbs.db
 .env

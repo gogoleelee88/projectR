@@ -2,6 +2,7 @@
 
 Project R is a dedicated repository for the next-generation Crack service. It is split into:
 
+- `apps/api`: FastAPI backend for auth bootstrap, feed, play, studio, creator, and ops endpoints.
 - `apps/web`: Next.js web product for discovery, creation, and live operations.
 - `apps/mobile`: Expo React Native app that ships separate Android and iOS builds.
 
@@ -18,6 +19,7 @@ This repository now includes a locally usable product shell built around:
 
 ## What works now
 
+- FastAPI backend with health, auth, feed, story, chat, party, studio, creator, and ops endpoints
 - Web landing plus a playable `/app` product shell
 - Discover feed with selectable flagship content
 - Story choice flow with progression log
@@ -30,6 +32,8 @@ This repository now includes a locally usable product shell built around:
 ## Commands
 
 ```bash
+npm run dev:api
+npm run check:api
 npm run dev:web
 npm run build:web
 npm run lint:web
@@ -41,6 +45,19 @@ npm run ios
 ## Runtime note
 
 Use Node `22.13.1` or newer. On this machine, `22.12.0` crashed `eslint`, `next build`, and `tsc` with Windows access violation `0xC0000005`.
+
+## Windows local run note
+
+On this machine, Next.js only built and served reliably from an ASCII-only path. If the repo lives under a folder with non-ASCII characters, map it to a drive letter first and run the web app from that drive:
+
+```powershell
+subst X: "<repo path>"
+cd /d X:\apps\web
+npx --yes --package=node@22.19.0 node .\node_modules\next\dist\bin\next build --webpack
+npx --yes --package=node@22.19.0 node .\node_modules\next\dist\bin\next start --hostname 127.0.0.1 --port 3013
+```
+
+The build and `next start` flow above were verified successfully from `X:\apps\web`.
 
 ## Repository policy
 

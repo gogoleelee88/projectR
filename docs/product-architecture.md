@@ -33,6 +33,7 @@ The baseline implementation maps the currently visible Crack service shape into 
 
 ## What this repository includes now
 
+- A FastAPI backend service for auth bootstrap, feed, play, studio, creator, and ops endpoints
 - A brand landing and service hub for the public-facing web
 - A locally interactive web product shell with discover, story, chat, party, studio, creator, and ops flows
 - A mobile app shell with matching discover, story, chat, studio, and creator tabs

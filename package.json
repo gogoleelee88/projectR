@@ -7,12 +7,14 @@
     "node": ">=22.13.1"
   },
   "scripts": {
+    "dev:api": "py -m uvicorn app.main:app --reload --app-dir apps/api",
+    "check:api": "python -m compileall apps/api/app",
     "dev:web": "npm --prefix apps/web run dev",
     "build:web": "npm --prefix apps/web run build",
     "lint:web": "npm --prefix apps/web run lint",
     "dev:mobile": "npm --prefix apps/mobile run start",
     "android": "npm --prefix apps/mobile run android",
     "ios": "npm --prefix apps/mobile run ios",
-    "check": "npm run lint:web"
+    "check": "npm run lint:web && npm run check:api"
   }
 }
