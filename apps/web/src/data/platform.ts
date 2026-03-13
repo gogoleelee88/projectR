@@ -39,6 +39,7 @@ export type StoryChoice = {
   result: string;
   trustDelta: number;
   hypeDelta: number;
+  nextEpisodeId?: string;
 };
 
 export type StoryEpisode = {

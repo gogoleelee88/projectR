@@ -458,11 +458,15 @@ export function resolveCrackDetail(
       accent: workAccents[work.module],
       primaryCta: {
         label:
-          work.module === "party" && relatedScenario
+          work.module === "story"
+            ? "스토리 플레이"
+            : work.module === "party" && relatedScenario
             ? "파티챗 라이브 룸 열기"
             : workCtaLabel(work.module),
         href:
-          work.module === "party" && relatedScenario
+          work.module === "story"
+            ? `/story/${work.id}`
+            : work.module === "party" && relatedScenario
             ? `/party?scenario=${relatedScenario.id}`
             : `/?tab=${resolveTabFromModule(work.module)}`,
       },

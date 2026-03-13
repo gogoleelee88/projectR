@@ -9,7 +9,7 @@ This file is the working order of execution. Items are implemented in sequence a
   - Saved items library
   - Save/unsave from feed and detail pages
   - Web UI and API wiring
-- [ ] 2. Story Play UI
+- [x] 2. Story Play UI
   - Branching story screen
   - Choice progression
   - Continue/resume state
@@ -38,4 +38,6 @@ This file is the working order of execution. Items are implemented in sequence a
 
 - Completed: Step 1 `Profile and Save`
 - Added: profile API, saved library API, home feed save buttons, detail save toggle, profile drawer
-- Next: Step 2 `Story Play UI`
+- Completed: Step 2 `Story Play UI`
+- Added: dedicated `/story/[workId]` player, local continue state, story API-driven choice progression
+- Next: Step 3 `Character Chat UI`

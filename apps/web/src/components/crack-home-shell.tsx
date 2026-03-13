@@ -184,6 +184,15 @@ export function CrackHomeShell({ initialData }: Props) {
   );
   const continueCard = sectionMap.story.featured[0] ?? sectionMap.character.featured[0] ?? null;
   const activePartyScenario = initialData.partyScenarios[0];
+  const storyWorkIds = useMemo(
+    () =>
+      new Set(
+        initialData.feed
+          .filter((work) => work.module === "story")
+          .map((work) => work.id),
+      ),
+    [initialData.feed],
+  );
   const savedLookup = useMemo(
     () => new Set(savedItems.map((item) => savedKey(item.itemKind, item.itemId))),
     [savedItems],
@@ -444,6 +453,14 @@ export function CrackHomeShell({ initialData }: Props) {
               {continueCard && (
                 <div className="mt-5 flex flex-wrap gap-3">
                   <Link href={continueCard.href} className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-[#121722]">카드 상세 보기</Link>
+                  {storyWorkIds.has(continueCard.id) && (
+                    <Link
+                      href={`/story/${continueCard.id}`}
+                      className="rounded-full border border-white/10 px-4 py-2 text-sm text-white/72"
+                    >
+                      스토리 플레이
+                    </Link>
+                  )}
                   <button type="button" onClick={() => void toggleSave(continueCard)} className={`rounded-full px-4 py-2 text-sm ${savedLookup.has(savedKey(continueCard.kind, continueCard.id)) ? "bg-[rgba(247,107,28,0.18)] text-[#fff0dc]" : "border border-white/10 text-white/72"}`}>{savedLookup.has(savedKey(continueCard.kind, continueCard.id)) ? "저장됨" : "저장"}</button>
                 </div>
               )}
@@ -486,6 +503,14 @@ export function CrackHomeShell({ initialData }: Props) {
                       <p className="mt-3 text-sm leading-7 text-white/68">{card.summary}</p>
                       <div className="mt-4 text-sm font-medium text-[#79f0d6]">{card.meta}</div>
                     </Link>
+                    {storyWorkIds.has(card.id) && (
+                      <Link
+                        href={`/story/${card.id}`}
+                        className="mt-4 inline-flex rounded-full border border-white/10 px-3 py-2 text-xs text-white/72"
+                      >
+                        플레이
+                      </Link>
+                    )}
                   </article>
                 </div>
               );
