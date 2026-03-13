@@ -106,12 +106,21 @@ export default async function DetailPage({ params }: PageProps) {
             ))}
           </div>
           <div className="mt-8 flex flex-wrap gap-3">
-            <Link
-              href={detail.primaryCta.href}
-              className="rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-[#130e09]"
-            >
-              {detail.primaryCta.label}
-            </Link>
+            {detail.primaryCta.href.startsWith("/story/") ? (
+              <a
+                href={detail.primaryCta.href}
+                className="rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-[#130e09]"
+              >
+                {detail.primaryCta.label}
+              </a>
+            ) : (
+              <Link
+                href={detail.primaryCta.href}
+                className="rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-[#130e09]"
+              >
+                {detail.primaryCta.label}
+              </Link>
+            )}
             <Link
               href={detail.secondaryCta.href}
               className="rounded-full border border-white/10 bg-white/5 px-5 py-3 text-sm text-white/72"
