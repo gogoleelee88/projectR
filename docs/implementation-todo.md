@@ -41,4 +41,5 @@ This file is the working order of execution. Items are implemented in sequence a
 - Completed: Step 2 `Story Play UI`
 - Added: dedicated `/story/[workId]` player, local continue state, story API-driven choice progression
 - Refined: `millennium` upgraded to a curated campaign with chapter map, objective board, cast rail, and ending report
+- Refined: story runtime now stores completed runs, replay suggestions, and season report stats
 - Next: Step 3 `Character Chat UI`
