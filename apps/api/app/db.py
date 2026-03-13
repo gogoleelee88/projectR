@@ -80,6 +80,15 @@ def bootstrap_database() -> None:
                 created_at TEXT NOT NULL,
                 expires_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS user_profiles (
+                user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                handle TEXT NOT NULL UNIQUE,
+                bio TEXT NOT NULL,
+                location TEXT NOT NULL,
+                avatar_gradient TEXT NOT NULL,
+                favorite_genres_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS works (
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
@@ -207,6 +216,16 @@ def bootstrap_database() -> None:
                 status TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS saved_items (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                item_kind TEXT NOT NULL,
+                item_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(user_id, item_kind, item_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_saved_items_user_created_at
+                ON saved_items (user_id, created_at DESC);
             """
         )
         _seed_database(connection)
@@ -233,6 +252,27 @@ def _seed_database(connection: sqlite3.Connection) -> None:
                     preset["membership"],
                     preset["sparks"],
                     preset["focus"],
+                    utc_now(),
+                ),
+            )
+
+    if _table_is_empty(connection, "user_profiles"):
+        users = connection.execute("SELECT * FROM users ORDER BY created_at").fetchall()
+        for user in users:
+            defaults = _default_profile(user)
+            connection.execute(
+                """
+                INSERT INTO user_profiles (
+                    user_id, handle, bio, location, avatar_gradient, favorite_genres_json, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    user["id"],
+                    defaults["handle"],
+                    defaults["bio"],
+                    defaults["location"],
+                    defaults["avatar_gradient"],
+                    json.dumps(defaults["favorite_genres"], ensure_ascii=False),
                     utc_now(),
                 ),
             )
@@ -465,6 +505,202 @@ def _public_user(row: sqlite3.Row) -> dict[str, str | int]:
         "membership": row["membership"],
         "sparks": row["sparks"],
         "focus": row["focus"],
+    }
+
+
+def _normalize_handle(seed: str) -> str:
+    normalized = "".join(
+        character.lower() if character.isalnum() else "-"
+        for character in seed.strip()
+    )
+    parts = [segment for segment in normalized.split("-") if segment]
+    return "-".join(parts)[:24] or "projectr-user"
+
+
+def _default_profile(row: sqlite3.Row | dict) -> dict[str, str | list[str]]:
+    role = row["role"]
+    name = row["name"]
+    defaults = {
+        "player": {
+            "bio": f"{name} keeps a shortlist of stories, characters, and image packs worth revisiting.",
+            "location": "Seoul",
+            "avatar_gradient": "linear-gradient(135deg, #1a2840 0%, #214d72 45%, #f76b1c 100%)",
+            "favorite_genres": ["Story", "Party Chat", "Romance", "Mystery"],
+        },
+        "creator": {
+            "bio": f"{name} is building repeat-play IP with season drops, premium beats, and creator store loops.",
+            "location": "Tokyo",
+            "avatar_gradient": "linear-gradient(135deg, #14242e 0%, #1f5c68 48%, #ffd36b 100%)",
+            "favorite_genres": ["Creator IP", "Fantasy", "Martial Arts", "Character"],
+        },
+        "operator": {
+            "bio": f"{name} manages live ops, feed quality, safety signals, and conversion experiments.",
+            "location": "Singapore",
+            "avatar_gradient": "linear-gradient(135deg, #151c32 0%, #304c90 52%, #78f0d5 100%)",
+            "favorite_genres": ["Live Ops", "Safety", "Party Chat", "Ranking"],
+        },
+    }
+    role_defaults = defaults.get(role, defaults["player"])
+    return {
+        "handle": _normalize_handle(row["id"]),
+        "bio": role_defaults["bio"],
+        "location": role_defaults["location"],
+        "avatar_gradient": role_defaults["avatar_gradient"],
+        "favorite_genres": role_defaults["favorite_genres"],
+    }
+
+
+def _serialize_profile(
+    row: sqlite3.Row,
+    profile_row: sqlite3.Row | None,
+) -> dict[str, str | int | list[str] | None]:
+    defaults = _default_profile(row)
+    favorite_genres = (
+        json.loads(profile_row["favorite_genres_json"])
+        if profile_row is not None
+        else defaults["favorite_genres"]
+    )
+    return {
+        "id": row["id"],
+        "email": row["email"],
+        "name": row["name"],
+        "role": row["role"],
+        "membership": row["membership"],
+        "sparks": row["sparks"],
+        "focus": row["focus"],
+        "handle": profile_row["handle"] if profile_row is not None else defaults["handle"],
+        "bio": profile_row["bio"] if profile_row is not None else defaults["bio"],
+        "location": profile_row["location"] if profile_row is not None else defaults["location"],
+        "avatar_gradient": (
+            profile_row["avatar_gradient"]
+            if profile_row is not None
+            else defaults["avatar_gradient"]
+        ),
+        "favorite_genres": favorite_genres,
+        "created_at": row["created_at"],
+        "updated_at": (
+            profile_row["updated_at"] if profile_row is not None else row["created_at"]
+        ),
+    }
+
+
+def _resolve_saved_item_snapshot(
+    connection: sqlite3.Connection,
+    item_kind: str,
+    item_id: str,
+) -> dict[str, str | list[str]] | None:
+    if item_kind == "work":
+        row = connection.execute("SELECT * FROM works WHERE id = ?", (item_id,)).fetchone()
+        if row is None:
+            return None
+        tags = [
+            tag_row["tag"]
+            for tag_row in connection.execute(
+                "SELECT tag FROM work_tags WHERE work_id = ? ORDER BY position",
+                (item_id,),
+            ).fetchall()
+        ]
+        return {
+            "title": row["title"],
+            "summary": row["summary"],
+            "href": f"/detail/work/{item_id}",
+            "meta": row["label"],
+            "chips": tags[:4],
+        }
+
+    if item_kind == "character":
+        row = connection.execute(
+            "SELECT * FROM characters WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "title": row["name"],
+            "summary": row["vibe"] or row["opener"],
+            "href": f"/detail/character/{item_id}",
+            "meta": row["role"],
+            "chips": ["Character", "Chat", "Saved"],
+        }
+
+    if item_kind == "style":
+        row = connection.execute(
+            "SELECT * FROM image_styles WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "title": row["name"],
+            "summary": row["summary"],
+            "href": f"/detail/style/{item_id}",
+            "meta": row["palette"],
+            "chips": [segment.strip() for segment in row["palette"].split(",")],
+        }
+
+    if item_kind == "template":
+        row = connection.execute(
+            "SELECT * FROM creator_templates WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        outline = [
+            outline_row["item_text"]
+            for outline_row in connection.execute(
+                """
+                SELECT item_text
+                FROM creator_template_outline
+                WHERE template_id = ?
+                ORDER BY position
+                """,
+                (item_id,),
+            ).fetchall()
+        ]
+        return {
+            "title": row["title"],
+            "summary": row["monetization"],
+            "href": f"/detail/template/{item_id}",
+            "meta": row["audience"],
+            "chips": outline[:4],
+        }
+
+    if item_kind == "release":
+        row = connection.execute(
+            "SELECT * FROM releases WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "title": row["title"],
+            "summary": row["pitch"],
+            "href": f"/detail/release/{item_id}",
+            "meta": row["status"],
+            "chips": [f'₩{row["price"]:,}', row["projection"]],
+        }
+
+    return None
+
+
+def _serialize_saved_item(
+    connection: sqlite3.Connection,
+    row: sqlite3.Row,
+) -> dict[str, str | list[str]]:
+    snapshot = _resolve_saved_item_snapshot(connection, row["item_kind"], row["item_id"])
+    if snapshot is None:
+        raise ValueError("Saved item target missing")
+    return {
+        "id": row["id"],
+        "user_id": row["user_id"],
+        "item_kind": row["item_kind"],
+        "item_id": row["item_id"],
+        "title": snapshot["title"],
+        "summary": snapshot["summary"],
+        "href": snapshot["href"],
+        "meta": snapshot["meta"],
+        "chips": snapshot["chips"],
+        "created_at": row["created_at"],
     }
 
 
@@ -871,6 +1107,184 @@ def get_user_by_id(user_id: str) -> dict | None:
         return dict(row) if row is not None else None
 
 
+def get_user_profile(user_id: str) -> dict | None:
+    with get_connection() as connection:
+        user_row = connection.execute(
+            "SELECT * FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        if user_row is None:
+            return None
+
+        profile_row = connection.execute(
+            "SELECT * FROM user_profiles WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        return _serialize_profile(user_row, profile_row)
+
+
+def update_user_profile(
+    user_id: str,
+    *,
+    name: str,
+    focus: str,
+    handle: str,
+    bio: str,
+    location: str,
+    avatar_gradient: str,
+    favorite_genres: list[str],
+) -> dict | None:
+    normalized_name = name.strip()
+    normalized_focus = focus.strip()
+    normalized_handle = _normalize_handle(handle)
+    normalized_bio = bio.strip()
+    normalized_location = location.strip()
+    normalized_gradient = avatar_gradient.strip()
+    normalized_genres = [
+        genre.strip()
+        for genre in favorite_genres
+        if genre.strip()
+    ][:6]
+
+    if not normalized_name or not normalized_focus or not normalized_handle:
+        raise ValueError("Invalid profile payload")
+
+    if not normalized_bio:
+        normalized_bio = f"{normalized_name} is curating a personal Project R shortlist."
+    if not normalized_location:
+        normalized_location = "Seoul"
+    if not normalized_gradient:
+        normalized_gradient = "linear-gradient(135deg, #1a2840 0%, #214d72 45%, #f76b1c 100%)"
+    if not normalized_genres:
+        normalized_genres = ["Story", "Character", "Party Chat"]
+
+    with get_connection() as connection:
+        user_row = connection.execute(
+            "SELECT * FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        if user_row is None:
+            return None
+
+        connection.execute(
+            """
+            UPDATE users
+            SET name = ?, focus = ?
+            WHERE id = ?
+            """,
+            (normalized_name, normalized_focus, user_id),
+        )
+
+        existing_profile = connection.execute(
+            "SELECT user_id FROM user_profiles WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        payload = (
+            normalized_handle,
+            normalized_bio,
+            normalized_location,
+            normalized_gradient,
+            json.dumps(normalized_genres, ensure_ascii=False),
+            utc_now(),
+            user_id,
+        )
+        if existing_profile is None:
+            connection.execute(
+                """
+                INSERT INTO user_profiles (
+                    handle, bio, location, avatar_gradient, favorite_genres_json, updated_at, user_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                payload,
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE user_profiles
+                SET handle = ?, bio = ?, location = ?, avatar_gradient = ?,
+                    favorite_genres_json = ?, updated_at = ?
+                WHERE user_id = ?
+                """,
+                payload,
+            )
+        connection.commit()
+
+    return get_user_profile(user_id)
+
+
+def list_saved_items(user_id: str) -> list[dict]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM saved_items
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            """,
+            (user_id,),
+        ).fetchall()
+        payload: list[dict] = []
+        for row in rows:
+            try:
+                payload.append(_serialize_saved_item(connection, row))
+            except ValueError:
+                continue
+        return payload
+
+
+def save_item(user_id: str, item_kind: str, item_id: str) -> dict:
+    with get_connection() as connection:
+        user = connection.execute(
+            "SELECT id FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        if user is None:
+            raise ValueError("User not found")
+
+        snapshot = _resolve_saved_item_snapshot(connection, item_kind, item_id)
+        if snapshot is None:
+            raise ValueError("Save target not found")
+
+        row = connection.execute(
+            """
+            SELECT *
+            FROM saved_items
+            WHERE user_id = ? AND item_kind = ? AND item_id = ?
+            """,
+            (user_id, item_kind, item_id),
+        ).fetchone()
+        if row is None:
+            save_id = str(uuid4())
+            created_at = utc_now()
+            connection.execute(
+                """
+                INSERT INTO saved_items (id, user_id, item_kind, item_id, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (save_id, user_id, item_kind, item_id, created_at),
+            )
+            connection.commit()
+            row = connection.execute(
+                "SELECT * FROM saved_items WHERE id = ?",
+                (save_id,),
+            ).fetchone()
+
+        return _serialize_saved_item(connection, row)
+
+
+def remove_saved_item(user_id: str, item_kind: str, item_id: str) -> bool:
+    with get_connection() as connection:
+        cursor = connection.execute(
+            """
+            DELETE FROM saved_items
+            WHERE user_id = ? AND item_kind = ? AND item_id = ?
+            """,
+            (user_id, item_kind, item_id),
+        )
+        connection.commit()
+        return cursor.rowcount > 0
+
+
 def create_user(name: str, email: str, password: str, role: str = "player") -> dict:
     password_hash, password_salt = hash_password(password)
     user_id = str(uuid4())
@@ -892,6 +1306,29 @@ def create_user(name: str, email: str, password: str, role: str = "player") -> d
                 "Explorer",
                 1200,
                 "새로운 세계관 탐색과 첫 구매 전환",
+                utc_now(),
+            ),
+        )
+        defaults = _default_profile(
+            {
+                "id": user_id,
+                "name": name,
+                "role": role,
+            }
+        )
+        connection.execute(
+            """
+            INSERT INTO user_profiles (
+                user_id, handle, bio, location, avatar_gradient, favorite_genres_json, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                defaults["handle"],
+                defaults["bio"],
+                defaults["location"],
+                defaults["avatar_gradient"],
+                json.dumps(defaults["favorite_genres"], ensure_ascii=False),
                 utc_now(),
             ),
         )

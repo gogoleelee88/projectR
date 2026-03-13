@@ -1,3 +1,4 @@
+import { DetailEngagement } from "@/components/detail-engagement";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
@@ -118,6 +119,7 @@ export default async function DetailPage({ params }: PageProps) {
               {detail.secondaryCta.label}
             </Link>
           </div>
+          <DetailEngagement kind={detail.kind} id={detail.id} />
         </div>
       </section>
 

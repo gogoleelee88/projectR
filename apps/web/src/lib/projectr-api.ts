@@ -53,6 +53,29 @@ export type PartyRealtimeSession = {
   participantId?: string | null;
 };
 
+export type UserProfile = SessionState & {
+  handle: string;
+  bio: string;
+  location: string;
+  avatarGradient: string;
+  favoriteGenres: string[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SavedItemRecord = {
+  id: string;
+  userId: string;
+  itemKind: string;
+  itemId: string;
+  title: string;
+  summary: string;
+  href: string;
+  meta: string;
+  chips: string[];
+  createdAt: string;
+};
+
 type ApiCharacter = Partial<CharacterProfile> & {
   id: string;
   name: string;
@@ -257,5 +280,18 @@ export async function fetchCurrentSession(
     headers: {
       Authorization: `Bearer ${token}`,
     },
+  });
+}
+
+export async function requestAuthorizedApi<T>(
+  path: string,
+  token: string,
+  init?: RequestInit,
+): Promise<T | null> {
+  const headers = new Headers(init?.headers);
+  headers.set("Authorization", `Bearer ${token}`);
+  return requestApi<T>(path, {
+    ...init,
+    headers,
   });
 }

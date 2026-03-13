@@ -20,6 +20,7 @@ from .db import (
     fetch_bootstrap_payload,
     generate_image_shot,
     get_feed_item,
+    get_user_profile,
     get_user_by_token,
     list_characters,
     list_creator_templates,
@@ -29,10 +30,14 @@ from .db import (
     list_party_scenarios,
     list_plans,
     list_releases,
+    list_saved_items,
     list_story_episodes,
     list_subscriptions,
+    remove_saved_item,
     revoke_auth_session,
     resolve_party_action,
+    save_item,
+    update_user_profile,
 )
 from .party import party_sessions
 from .runtime import request_live_chat, request_live_checkout, request_live_image
@@ -56,11 +61,15 @@ from .schemas import (
     RegisterRequest,
     ReleaseCreateRequest,
     ReleaseResponse,
+    SavedItemCreateRequest,
+    SavedItemResponse,
     SessionRequest,
     SessionResponse,
     StoryAdvanceRequest,
     StoryAdvanceResponse,
     SubscriptionResponse,
+    UserProfileResponse,
+    UserProfileUpdateRequest,
 )
 
 
@@ -86,6 +95,16 @@ def _resolve_bearer_token(authorization: str | None) -> str | None:
     if authorization.startswith(prefix):
         return authorization[len(prefix) :]
     return authorization
+
+
+def _require_session_user(authorization: str | None) -> dict:
+    token = _resolve_bearer_token(authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing token")
+    user = get_user_by_token(token)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    return user
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -132,12 +151,7 @@ def auth_login(payload: LoginRequest) -> AuthSessionResponse:
 
 @app.get("/auth/me", response_model=SessionResponse)
 def auth_me(authorization: str | None = Header(default=None)) -> SessionResponse:
-    token = _resolve_bearer_token(authorization)
-    if not token:
-        raise HTTPException(status_code=401, detail="Missing token")
-    user = get_user_by_token(token)
-    if user is None:
-        raise HTTPException(status_code=401, detail="Invalid session")
+    user = _require_session_user(authorization)
     return SessionResponse.model_validate(user)
 
 
@@ -163,6 +177,140 @@ def delete_session(authorization: str | None = Header(default=None)) -> dict[str
     if not revoke_auth_session(token):
         raise HTTPException(status_code=404, detail="Session not found")
     return {"status": "revoked"}
+
+
+@app.get("/profile/me", response_model=UserProfileResponse)
+def profile_me(authorization: str | None = Header(default=None)) -> UserProfileResponse:
+    user = _require_session_user(authorization)
+    profile = get_user_profile(user["id"])
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return UserProfileResponse.model_validate(
+        {
+            "id": profile["id"],
+            "email": profile["email"],
+            "name": profile["name"],
+            "role": profile["role"],
+            "membership": profile["membership"],
+            "sparks": profile["sparks"],
+            "focus": profile["focus"],
+            "handle": profile["handle"],
+            "bio": profile["bio"],
+            "location": profile["location"],
+            "avatarGradient": profile["avatar_gradient"],
+            "favoriteGenres": profile["favorite_genres"],
+            "createdAt": profile["created_at"],
+            "updatedAt": profile["updated_at"],
+        }
+    )
+
+
+@app.patch("/profile/me", response_model=UserProfileResponse)
+def profile_update(
+    payload: UserProfileUpdateRequest,
+    authorization: str | None = Header(default=None),
+) -> UserProfileResponse:
+    user = _require_session_user(authorization)
+    try:
+        profile = update_user_profile(
+            user["id"],
+            name=payload.name,
+            focus=payload.focus,
+            handle=payload.handle,
+            bio=payload.bio,
+            location=payload.location,
+            avatar_gradient=payload.avatar_gradient,
+            favorite_genres=payload.favorite_genres,
+        )
+    except IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="Handle already exists") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    return UserProfileResponse.model_validate(
+        {
+            "id": profile["id"],
+            "email": profile["email"],
+            "name": profile["name"],
+            "role": profile["role"],
+            "membership": profile["membership"],
+            "sparks": profile["sparks"],
+            "focus": profile["focus"],
+            "handle": profile["handle"],
+            "bio": profile["bio"],
+            "location": profile["location"],
+            "avatarGradient": profile["avatar_gradient"],
+            "favoriteGenres": profile["favorite_genres"],
+            "createdAt": profile["created_at"],
+            "updatedAt": profile["updated_at"],
+        }
+    )
+
+
+@app.get("/library/saves", response_model=list[SavedItemResponse])
+def library_saves(authorization: str | None = Header(default=None)) -> list[SavedItemResponse]:
+    user = _require_session_user(authorization)
+    items = list_saved_items(user["id"])
+    return [
+        SavedItemResponse.model_validate(
+            {
+                "id": item["id"],
+                "userId": item["user_id"],
+                "itemKind": item["item_kind"],
+                "itemId": item["item_id"],
+                "title": item["title"],
+                "summary": item["summary"],
+                "href": item["href"],
+                "meta": item["meta"],
+                "chips": item["chips"],
+                "createdAt": item["created_at"],
+            }
+        )
+        for item in items
+    ]
+
+
+@app.post("/library/saves", response_model=SavedItemResponse)
+def library_save(
+    payload: SavedItemCreateRequest,
+    authorization: str | None = Header(default=None),
+) -> SavedItemResponse:
+    user = _require_session_user(authorization)
+    try:
+        item = save_item(user["id"], payload.item_kind, payload.item_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return SavedItemResponse.model_validate(
+        {
+            "id": item["id"],
+            "userId": item["user_id"],
+            "itemKind": item["item_kind"],
+            "itemId": item["item_id"],
+            "title": item["title"],
+            "summary": item["summary"],
+            "href": item["href"],
+            "meta": item["meta"],
+            "chips": item["chips"],
+            "createdAt": item["created_at"],
+        }
+    )
+
+
+@app.delete("/library/saves/{item_kind}/{item_id}")
+def library_remove(
+    item_kind: str,
+    item_id: str,
+    authorization: str | None = Header(default=None),
+) -> dict[str, str]:
+    user = _require_session_user(authorization)
+    removed = remove_saved_item(user["id"], item_kind, item_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Saved item not found")
+    return {"status": "removed"}
 
 
 @app.get("/catalog/feed")

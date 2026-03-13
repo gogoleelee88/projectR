@@ -40,6 +40,51 @@ class AuthSessionResponse(BaseModel):
     user: SessionResponse
 
 
+class UserProfileResponse(BaseModel):
+    id: str
+    email: str | None = None
+    name: str
+    role: str
+    membership: str
+    sparks: int
+    focus: str
+    handle: str
+    bio: str
+    location: str
+    avatar_gradient: str = Field(alias="avatarGradient")
+    favorite_genres: list[str] = Field(alias="favoriteGenres")
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+
+
+class UserProfileUpdateRequest(BaseModel):
+    name: str
+    focus: str
+    handle: str
+    bio: str
+    location: str
+    avatar_gradient: str = Field(alias="avatarGradient")
+    favorite_genres: list[str] = Field(alias="favoriteGenres")
+
+
+class SavedItemCreateRequest(BaseModel):
+    item_kind: str = Field(alias="itemKind")
+    item_id: str = Field(alias="itemId")
+
+
+class SavedItemResponse(BaseModel):
+    id: str
+    user_id: str = Field(alias="userId")
+    item_kind: str = Field(alias="itemKind")
+    item_id: str = Field(alias="itemId")
+    title: str
+    summary: str
+    href: str
+    meta: str
+    chips: list[str]
+    created_at: str = Field(alias="createdAt")
+
+
 class StoryAdvanceRequest(BaseModel):
     episode_id: str = Field(alias="episodeId")
     choice_id: str = Field(alias="choiceId")
