@@ -1,5 +1,13 @@
+import { Suspense } from "react";
 import { CrackHomeShell } from "@/components/crack-home-shell";
+import { fetchBootstrapPayloadServer } from "@/lib/projectr-api";
 
-export default function AppPage() {
-  return <CrackHomeShell />;
+export default async function AppPage() {
+  const initialData = await fetchBootstrapPayloadServer();
+
+  return (
+    <Suspense fallback={null}>
+      <CrackHomeShell initialData={initialData} />
+    </Suspense>
+  );
 }
