@@ -9,8 +9,9 @@
   "scripts": {
     "dev:api": "python -m uvicorn app.main:app --reload --app-dir apps/api",
     "check:api": "python -m compileall apps/api/app",
-    "dev:web": "npm --prefix apps/web run dev",
-    "build:web": "npm --prefix apps/web run build",
+    "dev:web": "node scripts/run-web.mjs",
+    "build:web": "node scripts/run-web.mjs --mode=prod --build-only",
+    "start:web": "node scripts/run-web.mjs --mode=prod --start-only",
     "lint:web": "npm --prefix apps/web run lint",
     "dev:mobile": "npm --prefix apps/mobile run start",
     "android": "npm --prefix apps/mobile run android",

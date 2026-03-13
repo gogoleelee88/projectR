@@ -50,6 +50,7 @@ npm run dev:api
 npm run check:api
 npm run dev:web
 npm run build:web
+npm run start:web
 npm run lint:web
 npm run dev:mobile
 npm run android
@@ -62,16 +63,19 @@ Use Node `22.13.1` or newer. On this machine, `22.12.0` crashed `eslint`, `next 
 
 ## Windows local run note
 
-On this machine, Next.js only built and served reliably from an ASCII-only path. If the repo lives under a folder with non-ASCII characters, map it to a drive letter first and run the web app from that drive:
+On this machine, `next dev` hit an upstream Windows manifest access bug when the repo was served directly from the Desktop / OneDrive path. The root launcher now handles this automatically:
 
 ```powershell
-subst X: "<repo path>"
-cd /d X:\apps\web
-npx --yes --package=node@22.19.0 node .\node_modules\next\dist\bin\next build --webpack
-npx --yes --package=node@22.19.0 node .\node_modules\next\dist\bin\next start --hostname 127.0.0.1 --port 3013
+npm run dev:web
 ```
 
-The build and `next start` flow above were verified successfully from `X:\apps\web`.
+What it does on Windows:
+
+- pins the web runtime to `node@22.19.0`
+- creates a temporary ASCII-only drive mapping if the repo path contains non-ASCII characters
+- runs a production-style `next build` and `next start` flow on `127.0.0.1:3013`
+
+This avoids the known `UNKNOWN ... _buildManifest.js` dev-runtime failure while keeping the actual app build unchanged.
 
 ## Repository policy
 
