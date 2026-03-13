@@ -38,6 +38,8 @@ PARTY_ACTIONS = {
         "미확인 신호에 직접 응답한다",
     ],
 }
+FIRST_CLEAR_SPARKS = 320
+ENCORE_CLEAR_SPARKS = 90
 
 
 def utc_now() -> str:
@@ -226,6 +228,54 @@ def bootstrap_database() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_saved_items_user_created_at
                 ON saved_items (user_id, created_at DESC);
+            CREATE TABLE IF NOT EXISTS story_progress (
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                work_id TEXT NOT NULL,
+                current_episode_id TEXT NOT NULL,
+                trust_score INTEGER NOT NULL,
+                hype_score INTEGER NOT NULL,
+                visited_episode_ids_json TEXT NOT NULL,
+                ending_id TEXT,
+                log_json TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                synced_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, work_id)
+            );
+            CREATE TABLE IF NOT EXISTS story_run_history (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                work_id TEXT NOT NULL,
+                ending_id TEXT NOT NULL,
+                ending_title TEXT NOT NULL,
+                ending_class TEXT NOT NULL,
+                reward TEXT NOT NULL,
+                trust_score INTEGER NOT NULL,
+                hype_score INTEGER NOT NULL,
+                visited_count INTEGER NOT NULL,
+                choice_count INTEGER NOT NULL,
+                duration_minutes INTEGER NOT NULL,
+                highlight_tags_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_story_run_history_user_work_created_at
+                ON story_run_history (user_id, work_id, created_at DESC);
+            CREATE TABLE IF NOT EXISTS story_ending_unlocks (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                work_id TEXT NOT NULL,
+                ending_id TEXT NOT NULL,
+                ending_title TEXT NOT NULL,
+                ending_class TEXT NOT NULL,
+                reward TEXT NOT NULL,
+                clear_count INTEGER NOT NULL,
+                sparks_awarded_total INTEGER NOT NULL,
+                first_cleared_at TEXT NOT NULL,
+                last_cleared_at TEXT NOT NULL,
+                UNIQUE (user_id, work_id, ending_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_story_ending_unlocks_user_work_last_cleared_at
+                ON story_ending_unlocks (user_id, work_id, last_cleared_at DESC);
             """
         )
         _seed_database(connection)
@@ -787,6 +837,344 @@ def advance_story(
             "hype_score": hype_score + choice["hype_delta"],
             "next_episode_id": choice["next_episode_id"] or episode_id,
         }
+
+
+def _serialize_story_progress(row: sqlite3.Row | None) -> dict | None:
+    if row is None:
+        return None
+
+    return {
+        "current_episode_id": row["current_episode_id"],
+        "trust_score": row["trust_score"],
+        "hype_score": row["hype_score"],
+        "visited_episode_ids": json.loads(row["visited_episode_ids_json"]),
+        "ending_id": row["ending_id"],
+        "log": json.loads(row["log_json"]),
+        "started_at": row["started_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _serialize_story_run(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "work_id": row["work_id"],
+        "ending_id": row["ending_id"],
+        "ending_title": row["ending_title"],
+        "ending_class": row["ending_class"],
+        "reward": row["reward"],
+        "trust_score": row["trust_score"],
+        "hype_score": row["hype_score"],
+        "visited_count": row["visited_count"],
+        "choice_count": row["choice_count"],
+        "duration_minutes": row["duration_minutes"],
+        "created_at": row["created_at"],
+        "highlight_tags": json.loads(row["highlight_tags_json"]),
+    }
+
+
+def _serialize_story_ending_unlock(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "work_id": row["work_id"],
+        "ending_id": row["ending_id"],
+        "ending_title": row["ending_title"],
+        "ending_class": row["ending_class"],
+        "reward": row["reward"],
+        "clear_count": row["clear_count"],
+        "sparks_awarded_total": row["sparks_awarded_total"],
+        "first_cleared_at": row["first_cleared_at"],
+        "last_cleared_at": row["last_cleared_at"],
+    }
+
+
+def _build_story_sync_payload(
+    connection: sqlite3.Connection,
+    user_id: str,
+    work_id: str,
+    latest_reward_grant: dict | None = None,
+) -> dict:
+    progress_row = connection.execute(
+        """
+        SELECT *
+        FROM story_progress
+        WHERE user_id = ? AND work_id = ?
+        """,
+        (user_id, work_id),
+    ).fetchone()
+    run_rows = connection.execute(
+        """
+        SELECT *
+        FROM story_run_history
+        WHERE user_id = ? AND work_id = ?
+        ORDER BY created_at DESC
+        LIMIT 8
+        """,
+        (user_id, work_id),
+    ).fetchall()
+    reward_rows = connection.execute(
+        """
+        SELECT *
+        FROM story_ending_unlocks
+        WHERE user_id = ? AND work_id = ?
+        ORDER BY last_cleared_at DESC
+        """,
+        (user_id, work_id),
+    ).fetchall()
+    user_row = connection.execute(
+        "SELECT sparks FROM users WHERE id = ?",
+        (user_id,),
+    ).fetchone()
+
+    return {
+        "work_id": work_id,
+        "progress": _serialize_story_progress(progress_row),
+        "run_history": [_serialize_story_run(row) for row in run_rows],
+        "ending_rewards": [_serialize_story_ending_unlock(row) for row in reward_rows],
+        "total_sparks": 0 if user_row is None else user_row["sparks"],
+        "latest_reward_grant": latest_reward_grant,
+        "synced_at": utc_now(),
+    }
+
+
+def _record_story_completion(
+    connection: sqlite3.Connection,
+    *,
+    user_id: str,
+    work_id: str,
+    completion: dict,
+) -> dict:
+    existing_run = connection.execute(
+        """
+        SELECT id, created_at
+        FROM story_run_history
+        WHERE id = ? AND user_id = ?
+        """,
+        (completion["run_id"], user_id),
+    ).fetchone()
+    unlock_row = connection.execute(
+        """
+        SELECT *
+        FROM story_ending_unlocks
+        WHERE user_id = ? AND work_id = ? AND ending_id = ?
+        """,
+        (user_id, work_id, completion["ending_id"]),
+    ).fetchone()
+
+    if existing_run is not None:
+        return {
+            "awarded": False,
+            "sparks_awarded": 0,
+            "reward": completion["reward"],
+            "tier": "duplicate",
+            "clear_count": 0 if unlock_row is None else unlock_row["clear_count"],
+            "granted_at": existing_run["created_at"],
+        }
+
+    granted_at = completion["created_at"] or utc_now()
+    if unlock_row is None:
+        unlock_id = str(uuid4())
+        sparks_awarded = FIRST_CLEAR_SPARKS
+        clear_count = 1
+        tier = "first-clear"
+        connection.execute(
+            """
+            INSERT INTO story_ending_unlocks (
+                id,
+                user_id,
+                work_id,
+                ending_id,
+                ending_title,
+                ending_class,
+                reward,
+                clear_count,
+                sparks_awarded_total,
+                first_cleared_at,
+                last_cleared_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                unlock_id,
+                user_id,
+                work_id,
+                completion["ending_id"],
+                completion["ending_title"],
+                completion["ending_class"],
+                completion["reward"],
+                clear_count,
+                sparks_awarded,
+                granted_at,
+                granted_at,
+            ),
+        )
+    else:
+        sparks_awarded = ENCORE_CLEAR_SPARKS
+        clear_count = unlock_row["clear_count"] + 1
+        tier = "encore"
+        connection.execute(
+            """
+            UPDATE story_ending_unlocks
+            SET ending_title = ?,
+                ending_class = ?,
+                reward = ?,
+                clear_count = ?,
+                sparks_awarded_total = sparks_awarded_total + ?,
+                last_cleared_at = ?
+            WHERE id = ?
+            """,
+            (
+                completion["ending_title"],
+                completion["ending_class"],
+                completion["reward"],
+                clear_count,
+                sparks_awarded,
+                granted_at,
+                unlock_row["id"],
+            ),
+        )
+
+    connection.execute(
+        """
+        INSERT INTO story_run_history (
+            id,
+            user_id,
+            work_id,
+            ending_id,
+            ending_title,
+            ending_class,
+            reward,
+            trust_score,
+            hype_score,
+            visited_count,
+            choice_count,
+            duration_minutes,
+            highlight_tags_json,
+            created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            completion["run_id"],
+            user_id,
+            work_id,
+            completion["ending_id"],
+            completion["ending_title"],
+            completion["ending_class"],
+            completion["reward"],
+            completion["trust_score"],
+            completion["hype_score"],
+            completion["visited_count"],
+            completion["choice_count"],
+            completion["duration_minutes"],
+            json.dumps(completion["highlight_tags"], ensure_ascii=False),
+            granted_at,
+        ),
+    )
+    connection.execute(
+        "UPDATE users SET sparks = sparks + ? WHERE id = ?",
+        (sparks_awarded, user_id),
+    )
+
+    return {
+        "awarded": True,
+        "sparks_awarded": sparks_awarded,
+        "reward": completion["reward"],
+        "tier": tier,
+        "clear_count": clear_count,
+        "granted_at": granted_at,
+    }
+
+
+def get_story_progress_state(user_id: str, work_id: str) -> dict:
+    with get_connection() as connection:
+        return _build_story_sync_payload(connection, user_id, work_id)
+
+
+def sync_story_progress(
+    user_id: str,
+    *,
+    work_id: str,
+    current_episode_id: str,
+    trust_score: int,
+    hype_score: int,
+    visited_episode_ids: list[str],
+    ending_id: str | None,
+    log: list[dict],
+    started_at: str,
+    updated_at: str,
+    completion: dict | None = None,
+) -> dict:
+    with get_connection() as connection:
+        user_row = connection.execute(
+            "SELECT id FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        if user_row is None:
+            raise ValueError("User not found")
+
+        normalized_episode_ids = [
+            episode_id
+            for episode_id in dict.fromkeys(visited_episode_ids)
+            if episode_id
+        ]
+        normalized_log = log[:18]
+        synced_at = utc_now()
+        connection.execute(
+            """
+            INSERT INTO story_progress (
+                user_id,
+                work_id,
+                current_episode_id,
+                trust_score,
+                hype_score,
+                visited_episode_ids_json,
+                ending_id,
+                log_json,
+                started_at,
+                updated_at,
+                synced_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, work_id) DO UPDATE SET
+                current_episode_id = excluded.current_episode_id,
+                trust_score = excluded.trust_score,
+                hype_score = excluded.hype_score,
+                visited_episode_ids_json = excluded.visited_episode_ids_json,
+                ending_id = excluded.ending_id,
+                log_json = excluded.log_json,
+                started_at = excluded.started_at,
+                updated_at = excluded.updated_at,
+                synced_at = excluded.synced_at
+            """,
+            (
+                user_id,
+                work_id,
+                current_episode_id,
+                trust_score,
+                hype_score,
+                json.dumps(normalized_episode_ids, ensure_ascii=False),
+                ending_id,
+                json.dumps(normalized_log, ensure_ascii=False),
+                started_at,
+                updated_at,
+                synced_at,
+            ),
+        )
+
+        latest_reward_grant = None
+        if completion is not None and ending_id:
+            latest_reward_grant = _record_story_completion(
+                connection,
+                user_id=user_id,
+                work_id=work_id,
+                completion=completion,
+            )
+
+        connection.commit()
+        return _build_story_sync_payload(
+            connection,
+            user_id,
+            work_id,
+            latest_reward_grant=latest_reward_grant,
+        )
 
 
 def list_characters() -> list[dict]:

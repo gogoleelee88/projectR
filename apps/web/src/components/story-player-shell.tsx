@@ -10,6 +10,7 @@ import type {
   StoryEpisodeChoice,
   StoryEpisodeNode,
 } from "@/data/story-campaigns";
+import { AUTH_TOKEN_KEY, requestAuthorizedApi } from "@/lib/projectr-api";
 
 type StoryPlayerShellProps = { work: FeaturedWork; campaign: StoryCampaign };
 type StoryLogEntry = {
@@ -51,8 +52,40 @@ type StoryRunSummary = {
   highlightTags: string[];
 };
 
-const STORAGE_PREFIX = "projectr.story-progress.v4";
-const HISTORY_STORAGE_PREFIX = "projectr.story-history.v1";
+type StoryEndingReward = {
+  id: string;
+  workId: string;
+  endingId: string;
+  endingTitle: string;
+  endingClass: string;
+  reward: string;
+  clearCount: number;
+  sparksAwardedTotal: number;
+  firstClearedAt: string;
+  lastClearedAt: string;
+};
+
+type StoryRewardGrant = {
+  awarded: boolean;
+  sparksAwarded: number;
+  reward: string;
+  tier: string;
+  clearCount: number;
+  grantedAt: string;
+};
+
+type StorySyncResponse = {
+  workId: string;
+  progress: StoryProgress | null;
+  runHistory: StoryRunSummary[];
+  endingRewards: StoryEndingReward[];
+  totalSparks: number;
+  latestRewardGrant: StoryRewardGrant | null;
+  syncedAt: string;
+};
+
+const STORAGE_PREFIX = "projectr.story-progress.v5";
+const HISTORY_STORAGE_PREFIX = "projectr.story-history.v2";
 
 const clampScore = (value: number) => Math.max(0, Math.min(100, value));
 const storageKey = (workId: string) => `${STORAGE_PREFIX}.${workId}`;
@@ -72,6 +105,36 @@ function createInitialProgress(campaign: StoryCampaign): StoryProgress {
     updatedAt: "",
     startedAt: now,
   };
+}
+
+function sanitizeProgress(campaign: StoryCampaign, candidate: StoryProgress, fallback: StoryProgress) {
+  const knownEpisodes = new Set(campaign.episodes.map((episode) => episode.id));
+  return {
+    ...fallback,
+    ...candidate,
+    currentEpisodeId: knownEpisodes.has(candidate.currentEpisodeId)
+      ? candidate.currentEpisodeId
+      : fallback.currentEpisodeId,
+    visitedEpisodeIds: uniqueItems(
+      (candidate.visitedEpisodeIds ?? []).filter((episodeId) => knownEpisodes.has(episodeId)),
+    ),
+    log: Array.isArray(candidate.log) ? candidate.log.slice(0, 18) : fallback.log,
+    startedAt: candidate.startedAt || fallback.startedAt,
+    updatedAt: candidate.updatedAt || fallback.updatedAt,
+  };
+}
+
+function mergeRunHistory(primary: StoryRunSummary[], secondary: StoryRunSummary[]) {
+  const merged = new Map<string, StoryRunSummary>();
+  for (const entry of [...primary, ...secondary]) {
+    merged.set(entry.id, entry);
+  }
+  return [...merged.values()]
+    .sort(
+      (left, right) =>
+        new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+    )
+    .slice(0, 8);
 }
 
 function formatUpdatedAt(value: string) {
@@ -146,7 +209,7 @@ function buildRunSummary(workId: string, ending: StoryEnding, progress: StoryPro
     .map(([tag]) => tag);
 
   return {
-    id: `${ending.id}:${progress.updatedAt}`,
+    id: `${workId}:${ending.id}:${progress.startedAt}:${progress.updatedAt}`,
     workId,
     endingId: ending.id,
     endingTitle: ending.title,
@@ -160,6 +223,22 @@ function buildRunSummary(workId: string, ending: StoryEnding, progress: StoryPro
     createdAt: progress.updatedAt || new Date().toISOString(),
     highlightTags,
   };
+}
+
+function getSyncLabel(syncState: "guest" | "syncing" | "synced" | "offline", hasToken: boolean) {
+  if (!hasToken) return "Guest Local";
+  if (syncState === "synced") return "Cloud Sync";
+  if (syncState === "syncing") return "Syncing";
+  if (syncState === "offline") return "Offline Cache";
+  return "Guest Local";
+}
+
+function getSyncDetail(syncState: "guest" | "syncing" | "synced" | "offline", hasToken: boolean) {
+  if (!hasToken) return "로그인 후 스토리 진행과 엔딩 보상이 계정에 동기화됩니다.";
+  if (syncState === "synced") return "이 기기의 진행 상태가 계정과 동기화되고 있습니다.";
+  if (syncState === "syncing") return "방금 선택한 장면과 보상을 서버에 반영하는 중입니다.";
+  if (syncState === "offline") return "서버 응답이 없어 현재 기기 캐시에만 저장됩니다.";
+  return "스토리 데이터를 불러오는 중입니다.";
 }
 
 function getReplayRecommendations(progress: StoryProgress, ending: StoryEnding | null) {
@@ -204,28 +283,29 @@ export function StoryPlayerShell({ work, campaign }: StoryPlayerShellProps) {
   const [progress, setProgress] = useState<StoryProgress>(() => createInitialProgress(campaign));
   const [pendingChoiceId, setPendingChoiceId] = useState<string | null>(null);
   const [runHistory, setRunHistory] = useState<StoryRunSummary[]>([]);
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  const [syncState, setSyncState] = useState<"guest" | "syncing" | "synced" | "offline">("guest");
+  const [syncReady, setSyncReady] = useState(false);
+  const [endingRewards, setEndingRewards] = useState<StoryEndingReward[]>([]);
+  const [rewardGrant, setRewardGrant] = useState<StoryRewardGrant | null>(null);
+  const [sparkBalance, setSparkBalance] = useState<number | null>(null);
 
   useEffect(() => {
     const initial = createInitialProgress(campaign);
     const storedProgress = window.localStorage.getItem(storageKey(work.id));
     const storedHistory = window.localStorage.getItem(historyStorageKey(work.id));
+    let localProgress = initial;
+    let localHistory: StoryRunSummary[] = [];
+    const token = window.localStorage.getItem(AUTH_TOKEN_KEY);
+    let active = true;
 
     if (!storedProgress) {
       setProgress(initial);
     } else {
       try {
         const parsed = JSON.parse(storedProgress) as StoryProgress;
-        const knownEpisodes = new Set(campaign.episodes.map((episode) => episode.id));
-        setProgress({
-          ...initial,
-          ...parsed,
-          currentEpisodeId: knownEpisodes.has(parsed.currentEpisodeId)
-            ? parsed.currentEpisodeId
-            : initial.currentEpisodeId,
-          visitedEpisodeIds: uniqueItems(
-            parsed.visitedEpisodeIds.filter((episodeId) => knownEpisodes.has(episodeId)),
-          ),
-        });
+        localProgress = sanitizeProgress(campaign, parsed, initial);
+        setProgress(localProgress);
       } catch {
         setProgress(initial);
         window.localStorage.removeItem(storageKey(work.id));
@@ -237,12 +317,70 @@ export function StoryPlayerShell({ work, campaign }: StoryPlayerShellProps) {
     } else {
       try {
         const parsed = JSON.parse(storedHistory) as StoryRunSummary[];
-        setRunHistory(parsed.filter((entry) => entry.workId === work.id));
+        localHistory = parsed.filter((entry) => entry.workId === work.id);
+        setRunHistory(localHistory);
       } catch {
         setRunHistory([]);
         window.localStorage.removeItem(historyStorageKey(work.id));
       }
     }
+
+    setAuthToken(token);
+    setRewardGrant(null);
+
+    if (!token) {
+      setEndingRewards([]);
+      setSparkBalance(null);
+      setSyncState("guest");
+      setSyncReady(true);
+      return () => {
+        active = false;
+      };
+    }
+
+    setSyncReady(false);
+    setSyncState("syncing");
+
+    void requestAuthorizedApi<StorySyncResponse>(
+      `/story/progress?workId=${encodeURIComponent(work.id)}`,
+      token,
+    ).then((payload) => {
+      if (!active) return;
+
+      if (!payload) {
+        setSyncState("offline");
+        setSyncReady(true);
+        return;
+      }
+
+      if (payload.progress) {
+        const remoteProgress = sanitizeProgress(campaign, payload.progress, initial);
+        const localUpdatedAt = new Date(localProgress.updatedAt || 0).getTime();
+        const remoteUpdatedAt = new Date(remoteProgress.updatedAt || 0).getTime();
+        const nextProgress =
+          remoteUpdatedAt >= localUpdatedAt ? remoteProgress : localProgress;
+        setProgress(nextProgress);
+        window.localStorage.setItem(storageKey(work.id), JSON.stringify(nextProgress));
+      }
+
+      const mergedHistory = mergeRunHistory(payload.runHistory ?? [], localHistory);
+      setRunHistory(mergedHistory);
+      window.localStorage.setItem(
+        historyStorageKey(work.id),
+        JSON.stringify(mergedHistory),
+      );
+      setEndingRewards(payload.endingRewards ?? []);
+      setSparkBalance(payload.totalSparks);
+      if (payload.latestRewardGrant) {
+        setRewardGrant(payload.latestRewardGrant);
+      }
+      setSyncState("synced");
+      setSyncReady(true);
+    });
+
+    return () => {
+      active = false;
+    };
   }, [campaign, work.id]);
 
   const currentEpisode = useMemo(
@@ -289,6 +427,72 @@ export function StoryPlayerShell({ work, campaign }: StoryPlayerShellProps) {
       return next;
     });
   }, [ending, progress, work.id]);
+
+  useEffect(() => {
+    if (!authToken || !syncReady || !progress.currentEpisodeId) {
+      return;
+    }
+
+    let active = true;
+    const completionSummary =
+      ending && progress.updatedAt ? buildRunSummary(work.id, ending, progress) : null;
+    setSyncState("syncing");
+
+    void requestAuthorizedApi<StorySyncResponse>("/story/progress", authToken, {
+      method: "PUT",
+      body: JSON.stringify({
+        workId: work.id,
+        currentEpisodeId: progress.currentEpisodeId,
+        trustScore: progress.trustScore,
+        hypeScore: progress.hypeScore,
+        visitedEpisodeIds: progress.visitedEpisodeIds,
+        endingId: progress.endingId,
+        log: progress.log,
+        startedAt: progress.startedAt,
+        updatedAt: progress.updatedAt || new Date().toISOString(),
+        completion:
+          completionSummary === null
+            ? null
+            : {
+                runId: completionSummary.id,
+                endingId: completionSummary.endingId,
+                endingTitle: completionSummary.endingTitle,
+                endingClass: completionSummary.endingClass,
+                reward: completionSummary.reward,
+                trustScore: completionSummary.trustScore,
+                hypeScore: completionSummary.hypeScore,
+                visitedCount: completionSummary.visitedCount,
+                choiceCount: completionSummary.choiceCount,
+                durationMinutes: completionSummary.durationMinutes,
+                highlightTags: completionSummary.highlightTags,
+                createdAt: completionSummary.createdAt,
+              },
+      }),
+    }).then((payload) => {
+      if (!active) return;
+
+      if (!payload) {
+        setSyncState("offline");
+        return;
+      }
+
+      setSyncState("synced");
+      setSparkBalance(payload.totalSparks);
+      setEndingRewards(payload.endingRewards ?? []);
+      setRunHistory((current) => {
+        const next = mergeRunHistory(payload.runHistory ?? [], current);
+        window.localStorage.setItem(historyStorageKey(work.id), JSON.stringify(next));
+        return next;
+      });
+      if (payload.latestRewardGrant) {
+        setRewardGrant(payload.latestRewardGrant);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [authToken, ending, progress, syncReady, work.id]);
 
   const choose = (choice: StoryEpisodeChoice) => {
     if (!currentEpisode || pendingChoiceId || ending) return;
@@ -344,7 +548,37 @@ export function StoryPlayerShell({ work, campaign }: StoryPlayerShellProps) {
               <div className="mt-6 flex flex-wrap gap-3">
                 <Link href={`/detail/work/${work.id}`} className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-[#121722]">작품 상세</Link>
                 <a href="/?tab=story" className="rounded-full border border-white/10 px-4 py-2 text-sm text-white/74">스토리 홈</a>
-                <button type="button" onClick={() => persistProgress(createInitialProgress(campaign))} className="rounded-full border border-white/10 px-4 py-2 text-sm text-white/74">세션 리셋</button>
+                <button type="button" onClick={() => { setRewardGrant(null); persistProgress(createInitialProgress(campaign)); }} className="rounded-full border border-white/10 px-4 py-2 text-sm text-white/74">세션 리셋</button>
+              </div>
+              <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                {[
+                  ["Save Mode", getSyncLabel(syncState, Boolean(authToken)), getSyncDetail(syncState, Boolean(authToken))],
+                  [
+                    "Spark Bank",
+                    sparkBalance === null ? "Guest" : String(sparkBalance),
+                    sparkBalance === null
+                      ? "첫 엔딩 클리어 전까지는 기기 로컬 기록만 유지됩니다."
+                      : "엔딩 보상과 시즌 리플레이 보너스가 계정에 적립됩니다.",
+                  ],
+                  [
+                    "Ending Vault",
+                    String(endingRewards.length),
+                    endingRewards.length === 0
+                      ? "첫 엔딩을 열면 보상과 클리어 기록이 잠금해제됩니다."
+                      : "해금한 엔딩 보상이 계정 단위로 누적되고 있습니다.",
+                  ],
+                ].map(([label, value, detail]) => (
+                  <div
+                    key={label}
+                    className="rounded-[1.5rem] border border-white/10 bg-[#0d1520] p-4"
+                  >
+                    <div className="text-[11px] uppercase tracking-[0.18em] text-white/44">
+                      {label}
+                    </div>
+                    <div className="mt-3 text-2xl font-semibold text-white">{value}</div>
+                    <div className="mt-2 text-sm leading-7 text-white/60">{detail}</div>
+                  </div>
+                ))}
               </div>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">{[
@@ -361,7 +595,128 @@ export function StoryPlayerShell({ work, campaign }: StoryPlayerShellProps) {
           <div className="space-y-6">
             <section className="rounded-[2.2rem] border border-white/10 bg-[rgba(6,10,17,0.54)] p-6"><div className="flex flex-wrap items-start justify-between gap-4"><div><div className="text-[11px] uppercase tracking-[0.24em] text-[#ffcb96]">{currentEpisode.chapterLabel}</div><h2 className="mt-3 text-3xl font-semibold text-white">{currentEpisode.title}</h2><p className="mt-2 text-sm leading-7 text-white/62">{currentEpisode.slugline}</p></div><div className="rounded-[1.4rem] border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/64"><div>{currentEpisode.location}</div><div className="mt-1">{currentEpisode.runtime}</div></div></div><div className="mt-5 grid gap-4 lg:grid-cols-[1.1fr_0.9fr]"><div className="rounded-[1.6rem] border border-white/10 bg-[linear-gradient(145deg,rgba(255,255,255,0.06)_0%,rgba(255,255,255,0.02)_100%)] p-5"><div className="text-xs uppercase tracking-[0.18em] text-white/48">Scene</div><p className="mt-4 text-base leading-9 text-white/78">{currentEpisode.scene}</p><div className="mt-5 rounded-[1.3rem] border border-[#ffb36a]/25 bg-[rgba(255,179,106,0.08)] px-4 py-4 text-sm leading-7 text-[#fff0dc]">Stakes: {currentEpisode.stakes}</div></div><div className="space-y-4"><div className="rounded-[1.6rem] border border-white/10 bg-[#0d1520] p-5"><div className="text-xs uppercase tracking-[0.18em] text-white/48">Atmosphere</div><div className="mt-3 text-lg font-semibold text-white">{currentEpisode.atmosphere}</div><p className="mt-3 text-sm leading-7 text-white/64">{currentEpisode.directorNote}</p></div><div className="rounded-[1.6rem] border border-white/10 bg-[#0d1520] p-5"><div className="text-xs uppercase tracking-[0.18em] text-white/48">Current Objectives</div><div className="mt-3 flex flex-col gap-3">{currentEpisode.objectives.map((objective) => <div key={objective} className="rounded-[1.1rem] border border-white/8 px-3 py-3 text-sm text-white/72">{objective}</div>)}</div></div></div></div></section>
 
-            {ending ? <section className="rounded-[2.2rem] border border-[#ffb36a]/30 bg-[linear-gradient(145deg,rgba(255,179,106,0.16)_0%,rgba(75,36,20,0.34)_100%)] p-6"><div className="flex flex-wrap items-start justify-between gap-4"><div><div className="text-[11px] uppercase tracking-[0.24em] text-[#ffe2bf]">Ending Unlocked</div><h3 className="mt-3 text-3xl font-semibold text-white">{ending.title}</h3><p className="mt-2 text-sm leading-7 text-white/74">{ending.classification}</p></div><div className="rounded-[1.4rem] border border-white/15 bg-black/12 px-4 py-3 text-sm text-white/74">Reward: {ending.reward}</div></div><p className="mt-5 text-base leading-9 text-white/84">{ending.summary}</p><div className="mt-5 grid gap-4 lg:grid-cols-2"><div className="rounded-[1.5rem] border border-white/12 bg-black/12 p-5"><div className="text-xs uppercase tracking-[0.18em] text-white/52">Epilogue</div><p className="mt-3 text-sm leading-8 text-white/74">{ending.epilogue}</p></div><div className="rounded-[1.5rem] border border-white/12 bg-black/12 p-5"><div className="text-xs uppercase tracking-[0.18em] text-white/52">Next Hook</div><p className="mt-3 text-sm leading-8 text-white/74">{ending.nextHook}</p></div></div></section> : <section className="rounded-[2.2rem] border border-white/10 bg-[rgba(6,10,17,0.54)] p-6"><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="text-xs uppercase tracking-[0.18em] text-white/46">Choices</div><h3 className="mt-2 text-2xl font-semibold text-white">이번 장면을 어떤 기억으로 남길지 선택하세요</h3></div><div className="text-sm text-white/54">마지막 저장 {formatUpdatedAt(progress.updatedAt)}</div></div><div className="mt-5 grid gap-4">{currentEpisode.choices.map((choice) => <button key={choice.id} type="button" onClick={() => choose(choice)} disabled={Boolean(pendingChoiceId)} className="rounded-[1.8rem] border border-white/10 bg-[#0d1520] p-5 text-left transition hover:border-[#ffb36a]/40 hover:bg-[#121c2a] disabled:opacity-60"><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="text-xl font-semibold text-white">{choice.label}</div><div className="mt-2 text-sm text-[#ffd6ae]">{choice.preview}</div></div><div className="flex gap-2 text-xs"><span className="rounded-full border border-white/10 px-3 py-2 text-white/72">Trust {choice.trustDelta >= 0 ? `+${choice.trustDelta}` : choice.trustDelta}</span><span className="rounded-full border border-white/10 px-3 py-2 text-white/72">Hype {choice.hypeDelta >= 0 ? `+${choice.hypeDelta}` : choice.hypeDelta}</span></div></div><p className="mt-4 text-sm leading-7 text-white/64">{choice.resultDetail}</p><div className="mt-4 flex flex-wrap gap-2">{choice.impactTags.map((tag) => <span key={tag} className="rounded-full border border-[#ffb36a]/25 bg-[rgba(255,179,106,0.08)] px-3 py-2 text-[11px] uppercase tracking-[0.16em] text-[#ffe0bc]">{tag}</span>)}</div></button>)}</div></section>}
+            {ending ? (
+              <section className="rounded-[2.2rem] border border-[#ffb36a]/30 bg-[linear-gradient(145deg,rgba(255,179,106,0.16)_0%,rgba(75,36,20,0.34)_100%)] p-6">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-[0.24em] text-[#ffe2bf]">
+                      Ending Unlocked
+                    </div>
+                    <h3 className="mt-3 text-3xl font-semibold text-white">
+                      {ending.title}
+                    </h3>
+                    <p className="mt-2 text-sm leading-7 text-white/74">
+                      {ending.classification}
+                    </p>
+                  </div>
+                  <div className="rounded-[1.4rem] border border-white/15 bg-black/12 px-4 py-3 text-sm text-white/74">
+                    Reward: {ending.reward}
+                  </div>
+                </div>
+                <p className="mt-5 text-base leading-9 text-white/84">{ending.summary}</p>
+                <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                  <div className="rounded-[1.5rem] border border-white/12 bg-black/12 p-5">
+                    <div className="text-xs uppercase tracking-[0.18em] text-white/52">
+                      Epilogue
+                    </div>
+                    <p className="mt-3 text-sm leading-8 text-white/74">
+                      {ending.epilogue}
+                    </p>
+                  </div>
+                  <div className="rounded-[1.5rem] border border-white/12 bg-black/12 p-5">
+                    <div className="text-xs uppercase tracking-[0.18em] text-white/52">
+                      Next Hook
+                    </div>
+                    <p className="mt-3 text-sm leading-8 text-white/74">
+                      {ending.nextHook}
+                    </p>
+                  </div>
+                </div>
+              </section>
+            ) : (
+              <section className="rounded-[2.2rem] border border-white/10 bg-[rgba(6,10,17,0.54)] p-6">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.18em] text-white/46">
+                      Choices
+                    </div>
+                    <h3 className="mt-2 text-2xl font-semibold text-white">
+                      이번 장면을 어떤 기억으로 남길지 선택하세요
+                    </h3>
+                  </div>
+                  <div className="text-sm text-white/54">
+                    마지막 저장 {formatUpdatedAt(progress.updatedAt)}
+                  </div>
+                </div>
+                <div className="mt-5 grid gap-4">
+                  {currentEpisode.choices.map((choice) => (
+                    <button
+                      key={choice.id}
+                      type="button"
+                      onClick={() => choose(choice)}
+                      disabled={Boolean(pendingChoiceId)}
+                      className="rounded-[1.8rem] border border-white/10 bg-[#0d1520] p-5 text-left transition hover:border-[#ffb36a]/40 hover:bg-[#121c2a] disabled:opacity-60"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <div className="text-xl font-semibold text-white">
+                            {choice.label}
+                          </div>
+                          <div className="mt-2 text-sm text-[#ffd6ae]">
+                            {choice.preview}
+                          </div>
+                        </div>
+                        <div className="flex gap-2 text-xs">
+                          <span className="rounded-full border border-white/10 px-3 py-2 text-white/72">
+                            Trust {choice.trustDelta >= 0 ? `+${choice.trustDelta}` : choice.trustDelta}
+                          </span>
+                          <span className="rounded-full border border-white/10 px-3 py-2 text-white/72">
+                            Hype {choice.hypeDelta >= 0 ? `+${choice.hypeDelta}` : choice.hypeDelta}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="mt-4 text-sm leading-7 text-white/64">
+                        {choice.resultDetail}
+                      </p>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {choice.impactTags.map((tag) => (
+                          <span
+                            key={tag}
+                            className="rounded-full border border-[#ffb36a]/25 bg-[rgba(255,179,106,0.08)] px-3 py-2 text-[11px] uppercase tracking-[0.16em] text-[#ffe0bc]"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
+
+
+            {rewardGrant ? (
+              <section className="rounded-[2.2rem] border border-[#79f0d6]/28 bg-[linear-gradient(145deg,rgba(16,55,48,0.86)_0%,rgba(8,17,22,0.9)_100%)] p-6">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-[0.22em] text-[#8df3db]">
+                      Reward Drop
+                    </div>
+                    <h3 className="mt-3 text-2xl font-semibold text-white">
+                      {rewardGrant.reward}
+                    </h3>
+                    <p className="mt-2 text-sm leading-7 text-white/72">
+                      {rewardGrant.awarded
+                        ? `${rewardGrant.sparksAwarded} sparks가 계정에 적립되었습니다.`
+                        : "이미 동기화된 런이라 중복 적립 없이 기록만 복원했습니다."}
+                    </p>
+                  </div>
+                  <div className="rounded-[1.4rem] border border-white/12 bg-black/12 px-4 py-3 text-sm text-white/74">
+                    {rewardGrant.tier} · clear {rewardGrant.clearCount}
+                  </div>
+                </div>
+              </section>
+            ) : null}
 
             <section className="rounded-[2.2rem] border border-white/10 bg-[rgba(6,10,17,0.54)] p-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -449,6 +804,50 @@ export function StoryPlayerShell({ work, campaign }: StoryPlayerShellProps) {
           </div>
 
           <div className="space-y-6">
+            <section className="rounded-[2.2rem] border border-white/10 bg-[rgba(6,10,17,0.54)] p-6">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-xs uppercase tracking-[0.2em] text-white/46">
+                  Ending Vault
+                </div>
+                <div className="text-sm text-white/48">{endingRewards.length} unlocked</div>
+              </div>
+              <div className="mt-4 space-y-3">
+                {endingRewards.length === 0 ? (
+                  <div className="rounded-[1.4rem] border border-dashed border-white/12 px-4 py-5 text-sm text-white/56">
+                    첫 엔딩을 열면 보상과 클리어 횟수가 계정 단위로 저장됩니다.
+                  </div>
+                ) : (
+                  endingRewards.map((entry) => (
+                    <div
+                      key={entry.id}
+                      className="rounded-[1.4rem] border border-white/10 bg-[#0d1520] p-4"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <div className="text-sm font-semibold text-white">
+                            {entry.endingTitle}
+                          </div>
+                          <div className="mt-1 text-xs uppercase tracking-[0.16em] text-[#8df3db]">
+                            {entry.reward}
+                          </div>
+                        </div>
+                        <div className="text-xs text-white/48">
+                          clear {entry.clearCount}
+                        </div>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <span className="rounded-full border border-white/10 px-3 py-2 text-xs text-white/68">
+                          {entry.sparksAwardedTotal} sparks
+                        </span>
+                        <span className="rounded-full border border-white/10 px-3 py-2 text-xs text-white/68">
+                          {formatUpdatedAt(entry.lastClearedAt)}
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
             <section className="rounded-[2.2rem] border border-white/10 bg-[rgba(6,10,17,0.54)] p-6">
               <div className="flex items-center justify-between gap-3">
                 <div className="text-xs uppercase tracking-[0.2em] text-white/46">
