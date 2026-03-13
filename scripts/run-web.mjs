@@ -66,7 +66,7 @@ function isAsciiOnly(value) {
 }
 
 function listSubstMappings() {
-  const result = spawnSync("cmd", ["/c", "subst"], {
+  const result = spawnSync("cmd", ["/d", "/s", "/c", "chcp 65001>nul && subst"], {
     cwd: repoRoot,
     encoding: "utf8",
   });
@@ -89,9 +89,23 @@ function listSubstMappings() {
 function resolveWindowsWebDir() {
   const mappings = listSubstMappings();
   const normalizedRepoRoot = path.normalize(repoRoot).toLowerCase();
+  const repoBaseName = path.basename(repoRoot).toLowerCase();
 
   for (const [drive, target] of mappings.entries()) {
     if (path.normalize(target).toLowerCase() === normalizedRepoRoot) {
+      return {
+        webDir: path.join(`${drive}\\`, "apps", "web"),
+        cleanup: null,
+      };
+    }
+  }
+
+  for (const [drive, target] of mappings.entries()) {
+    const normalizedTarget = path.normalize(target).toLowerCase();
+    if (
+      normalizedTarget.endsWith(`\\${repoBaseName}`) &&
+      existsSync(path.join(`${drive}\\`, "apps", "web"))
+    ) {
       return {
         webDir: path.join(`${drive}\\`, "apps", "web"),
         cleanup: null,

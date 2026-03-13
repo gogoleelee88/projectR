@@ -100,6 +100,109 @@ class StoryAdvanceResponse(BaseModel):
     next_episode_id: str = Field(alias="nextEpisodeId")
 
 
+class StoryProgressLogEntryPayload(BaseModel):
+    episode_id: str = Field(alias="episodeId")
+    episode_title: str = Field(alias="episodeTitle")
+    choice_id: str = Field(alias="choiceId")
+    choice_label: str = Field(alias="choiceLabel")
+    result_title: str = Field(alias="resultTitle")
+    result_detail: str = Field(alias="resultDetail")
+    impact_tags: list[str] = Field(alias="impactTags")
+    trust_score: int = Field(alias="trustScore")
+    hype_score: int = Field(alias="hypeScore")
+    created_at: str = Field(alias="createdAt")
+
+
+class StoryRunCompletionPayload(BaseModel):
+    run_id: str = Field(alias="runId")
+    ending_id: str = Field(alias="endingId")
+    ending_title: str = Field(alias="endingTitle")
+    ending_class: str = Field(alias="endingClass")
+    reward: str
+    trust_score: int = Field(alias="trustScore")
+    hype_score: int = Field(alias="hypeScore")
+    visited_count: int = Field(alias="visitedCount")
+    choice_count: int = Field(alias="choiceCount")
+    duration_minutes: int = Field(alias="durationMinutes")
+    highlight_tags: list[str] = Field(alias="highlightTags")
+    created_at: str = Field(alias="createdAt")
+
+
+class StoryProgressSyncRequest(BaseModel):
+    work_id: str = Field(alias="workId")
+    current_episode_id: str = Field(alias="currentEpisodeId")
+    trust_score: int = Field(alias="trustScore")
+    hype_score: int = Field(alias="hypeScore")
+    visited_episode_ids: list[str] = Field(alias="visitedEpisodeIds")
+    ending_id: str | None = Field(default=None, alias="endingId")
+    log: list[StoryProgressLogEntryPayload]
+    started_at: str = Field(alias="startedAt")
+    updated_at: str = Field(alias="updatedAt")
+    completion: StoryRunCompletionPayload | None = None
+
+
+class StoryProgressStateResponse(BaseModel):
+    current_episode_id: str = Field(alias="currentEpisodeId")
+    trust_score: int = Field(alias="trustScore")
+    hype_score: int = Field(alias="hypeScore")
+    visited_episode_ids: list[str] = Field(alias="visitedEpisodeIds")
+    ending_id: str | None = Field(default=None, alias="endingId")
+    log: list[StoryProgressLogEntryPayload]
+    started_at: str = Field(alias="startedAt")
+    updated_at: str = Field(alias="updatedAt")
+
+
+class StoryRunSummaryResponse(BaseModel):
+    id: str
+    work_id: str = Field(alias="workId")
+    ending_id: str = Field(alias="endingId")
+    ending_title: str = Field(alias="endingTitle")
+    ending_class: str = Field(alias="endingClass")
+    reward: str
+    trust_score: int = Field(alias="trustScore")
+    hype_score: int = Field(alias="hypeScore")
+    visited_count: int = Field(alias="visitedCount")
+    choice_count: int = Field(alias="choiceCount")
+    duration_minutes: int = Field(alias="durationMinutes")
+    created_at: str = Field(alias="createdAt")
+    highlight_tags: list[str] = Field(alias="highlightTags")
+
+
+class StoryEndingRewardResponse(BaseModel):
+    id: str
+    work_id: str = Field(alias="workId")
+    ending_id: str = Field(alias="endingId")
+    ending_title: str = Field(alias="endingTitle")
+    ending_class: str = Field(alias="endingClass")
+    reward: str
+    clear_count: int = Field(alias="clearCount")
+    sparks_awarded_total: int = Field(alias="sparksAwardedTotal")
+    first_cleared_at: str = Field(alias="firstClearedAt")
+    last_cleared_at: str = Field(alias="lastClearedAt")
+
+
+class StoryRewardGrantResponse(BaseModel):
+    awarded: bool
+    sparks_awarded: int = Field(alias="sparksAwarded")
+    reward: str
+    tier: str
+    clear_count: int = Field(alias="clearCount")
+    granted_at: str = Field(alias="grantedAt")
+
+
+class StoryProgressSyncResponse(BaseModel):
+    work_id: str = Field(alias="workId")
+    progress: StoryProgressStateResponse | None = None
+    run_history: list[StoryRunSummaryResponse] = Field(alias="runHistory")
+    ending_rewards: list[StoryEndingRewardResponse] = Field(alias="endingRewards")
+    total_sparks: int = Field(alias="totalSparks")
+    latest_reward_grant: StoryRewardGrantResponse | None = Field(
+        default=None,
+        alias="latestRewardGrant",
+    )
+    synced_at: str = Field(alias="syncedAt")
+
+
 class ChatRequest(BaseModel):
     character_id: str = Field(alias="characterId")
     message: str

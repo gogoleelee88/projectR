@@ -20,6 +20,7 @@ from .db import (
     fetch_bootstrap_payload,
     generate_image_shot,
     get_feed_item,
+    get_story_progress_state,
     get_user_profile,
     get_user_by_token,
     list_characters,
@@ -37,6 +38,7 @@ from .db import (
     revoke_auth_session,
     resolve_party_action,
     save_item,
+    sync_story_progress,
     update_user_profile,
 )
 from .party import party_sessions
@@ -67,6 +69,8 @@ from .schemas import (
     SessionResponse,
     StoryAdvanceRequest,
     StoryAdvanceResponse,
+    StoryProgressSyncRequest,
+    StoryProgressSyncResponse,
     SubscriptionResponse,
     UserProfileResponse,
     UserProfileUpdateRequest,
@@ -348,6 +352,194 @@ def story_advance(payload: StoryAdvanceRequest) -> StoryAdvanceResponse:
             "trustScore": response["trust_score"],
             "hypeScore": response["hype_score"],
             "nextEpisodeId": response["next_episode_id"],
+        }
+    )
+
+
+@app.get("/story/progress", response_model=StoryProgressSyncResponse)
+def story_progress(
+    work_id: str = Query(alias="workId"),
+    authorization: str | None = Header(default=None),
+) -> StoryProgressSyncResponse:
+    user = _require_session_user(authorization)
+    payload = get_story_progress_state(user["id"], work_id)
+    return StoryProgressSyncResponse.model_validate(
+        {
+            "workId": payload["work_id"],
+            "progress": None
+            if payload["progress"] is None
+            else {
+                "currentEpisodeId": payload["progress"]["current_episode_id"],
+                "trustScore": payload["progress"]["trust_score"],
+                "hypeScore": payload["progress"]["hype_score"],
+                "visitedEpisodeIds": payload["progress"]["visited_episode_ids"],
+                "endingId": payload["progress"]["ending_id"],
+                "log": [
+                    {
+                        "episodeId": entry["episode_id"],
+                        "episodeTitle": entry["episode_title"],
+                        "choiceId": entry["choice_id"],
+                        "choiceLabel": entry["choice_label"],
+                        "resultTitle": entry["result_title"],
+                        "resultDetail": entry["result_detail"],
+                        "impactTags": entry["impact_tags"],
+                        "trustScore": entry["trust_score"],
+                        "hypeScore": entry["hype_score"],
+                        "createdAt": entry["created_at"],
+                    }
+                    for entry in payload["progress"]["log"]
+                ],
+                "startedAt": payload["progress"]["started_at"],
+                "updatedAt": payload["progress"]["updated_at"],
+            },
+            "runHistory": [
+                {
+                    "id": run["id"],
+                    "workId": run["work_id"],
+                    "endingId": run["ending_id"],
+                    "endingTitle": run["ending_title"],
+                    "endingClass": run["ending_class"],
+                    "reward": run["reward"],
+                    "trustScore": run["trust_score"],
+                    "hypeScore": run["hype_score"],
+                    "visitedCount": run["visited_count"],
+                    "choiceCount": run["choice_count"],
+                    "durationMinutes": run["duration_minutes"],
+                    "createdAt": run["created_at"],
+                    "highlightTags": run["highlight_tags"],
+                }
+                for run in payload["run_history"]
+            ],
+            "endingRewards": [
+                {
+                    "id": reward["id"],
+                    "workId": reward["work_id"],
+                    "endingId": reward["ending_id"],
+                    "endingTitle": reward["ending_title"],
+                    "endingClass": reward["ending_class"],
+                    "reward": reward["reward"],
+                    "clearCount": reward["clear_count"],
+                    "sparksAwardedTotal": reward["sparks_awarded_total"],
+                    "firstClearedAt": reward["first_cleared_at"],
+                    "lastClearedAt": reward["last_cleared_at"],
+                }
+                for reward in payload["ending_rewards"]
+            ],
+            "totalSparks": payload["total_sparks"],
+            "latestRewardGrant": None
+            if payload["latest_reward_grant"] is None
+            else {
+                "awarded": payload["latest_reward_grant"]["awarded"],
+                "sparksAwarded": payload["latest_reward_grant"]["sparks_awarded"],
+                "reward": payload["latest_reward_grant"]["reward"],
+                "tier": payload["latest_reward_grant"]["tier"],
+                "clearCount": payload["latest_reward_grant"]["clear_count"],
+                "grantedAt": payload["latest_reward_grant"]["granted_at"],
+            },
+            "syncedAt": payload["synced_at"],
+        }
+    )
+
+
+@app.put("/story/progress", response_model=StoryProgressSyncResponse)
+def story_progress_sync(
+    payload: StoryProgressSyncRequest,
+    authorization: str | None = Header(default=None),
+) -> StoryProgressSyncResponse:
+    user = _require_session_user(authorization)
+    try:
+        result = sync_story_progress(
+            user["id"],
+            work_id=payload.work_id,
+            current_episode_id=payload.current_episode_id,
+            trust_score=payload.trust_score,
+            hype_score=payload.hype_score,
+            visited_episode_ids=payload.visited_episode_ids,
+            ending_id=payload.ending_id,
+            log=[entry.model_dump(by_alias=False) for entry in payload.log],
+            started_at=payload.started_at,
+            updated_at=payload.updated_at,
+            completion=None
+            if payload.completion is None
+            else payload.completion.model_dump(by_alias=False),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return StoryProgressSyncResponse.model_validate(
+        {
+            "workId": result["work_id"],
+            "progress": None
+            if result["progress"] is None
+            else {
+                "currentEpisodeId": result["progress"]["current_episode_id"],
+                "trustScore": result["progress"]["trust_score"],
+                "hypeScore": result["progress"]["hype_score"],
+                "visitedEpisodeIds": result["progress"]["visited_episode_ids"],
+                "endingId": result["progress"]["ending_id"],
+                "log": [
+                    {
+                        "episodeId": entry["episode_id"],
+                        "episodeTitle": entry["episode_title"],
+                        "choiceId": entry["choice_id"],
+                        "choiceLabel": entry["choice_label"],
+                        "resultTitle": entry["result_title"],
+                        "resultDetail": entry["result_detail"],
+                        "impactTags": entry["impact_tags"],
+                        "trustScore": entry["trust_score"],
+                        "hypeScore": entry["hype_score"],
+                        "createdAt": entry["created_at"],
+                    }
+                    for entry in result["progress"]["log"]
+                ],
+                "startedAt": result["progress"]["started_at"],
+                "updatedAt": result["progress"]["updated_at"],
+            },
+            "runHistory": [
+                {
+                    "id": run["id"],
+                    "workId": run["work_id"],
+                    "endingId": run["ending_id"],
+                    "endingTitle": run["ending_title"],
+                    "endingClass": run["ending_class"],
+                    "reward": run["reward"],
+                    "trustScore": run["trust_score"],
+                    "hypeScore": run["hype_score"],
+                    "visitedCount": run["visited_count"],
+                    "choiceCount": run["choice_count"],
+                    "durationMinutes": run["duration_minutes"],
+                    "createdAt": run["created_at"],
+                    "highlightTags": run["highlight_tags"],
+                }
+                for run in result["run_history"]
+            ],
+            "endingRewards": [
+                {
+                    "id": reward["id"],
+                    "workId": reward["work_id"],
+                    "endingId": reward["ending_id"],
+                    "endingTitle": reward["ending_title"],
+                    "endingClass": reward["ending_class"],
+                    "reward": reward["reward"],
+                    "clearCount": reward["clear_count"],
+                    "sparksAwardedTotal": reward["sparks_awarded_total"],
+                    "firstClearedAt": reward["first_cleared_at"],
+                    "lastClearedAt": reward["last_cleared_at"],
+                }
+                for reward in result["ending_rewards"]
+            ],
+            "totalSparks": result["total_sparks"],
+            "latestRewardGrant": None
+            if result["latest_reward_grant"] is None
+            else {
+                "awarded": result["latest_reward_grant"]["awarded"],
+                "sparksAwarded": result["latest_reward_grant"]["sparks_awarded"],
+                "reward": result["latest_reward_grant"]["reward"],
+                "tier": result["latest_reward_grant"]["tier"],
+                "clearCount": result["latest_reward_grant"]["clear_count"],
+                "grantedAt": result["latest_reward_grant"]["granted_at"],
+            },
+            "syncedAt": result["synced_at"],
         }
     )
 
