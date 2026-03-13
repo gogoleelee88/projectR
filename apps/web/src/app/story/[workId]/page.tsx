@@ -1,4 +1,5 @@
 import { StoryPlayerShell } from "@/components/story-player-shell";
+import { getStoryCampaign } from "@/data/story-campaigns";
 import { fetchBootstrapPayloadServer } from "@/lib/projectr-api";
 import { notFound } from "next/navigation";
 
@@ -12,16 +13,15 @@ export async function generateMetadata({ params }: PageProps) {
   const { workId } = await params;
   const data = await fetchBootstrapPayloadServer();
   const work = data.feed.find((entry) => entry.id === workId && entry.module === "story");
+  const campaign = getStoryCampaign(workId, work ?? null, data.episodes);
 
-  if (!work) {
-    return {
-      title: "Story Player",
-    };
+  if (!work || !campaign) {
+    return { title: "Story Player" };
   }
 
   return {
-    title: `${work.title} · Story Player`,
-    description: work.summary,
+    title: `${work.title} - ${campaign.seasonLabel}`,
+    description: campaign.logline,
   };
 }
 
@@ -29,10 +29,11 @@ export default async function StoryPlayerPage({ params }: PageProps) {
   const { workId } = await params;
   const data = await fetchBootstrapPayloadServer();
   const work = data.feed.find((entry) => entry.id === workId && entry.module === "story");
+  const campaign = getStoryCampaign(workId, work ?? null, data.episodes);
 
-  if (!work || data.episodes.length === 0) {
+  if (!work || !campaign) {
     notFound();
   }
 
-  return <StoryPlayerShell work={work} episodes={data.episodes} />;
+  return <StoryPlayerShell work={work} campaign={campaign} />;
 }
