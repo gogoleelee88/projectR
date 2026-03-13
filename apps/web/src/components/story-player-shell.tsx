@@ -44,6 +44,10 @@ function storageKey(workId: string) {
   return `${STORAGE_PREFIX}.${workId}`;
 }
 
+function clampScore(value: number) {
+  return Math.max(0, Math.min(100, value));
+}
+
 function createInitialProgress(episodes: StoryEpisode[]): StoryProgress {
   return {
     currentEpisodeId: episodes[0]?.id ?? "",
@@ -56,14 +60,34 @@ function createInitialProgress(episodes: StoryEpisode[]): StoryProgress {
 
 function formatUpdatedAt(value: string) {
   if (!value) {
-    return "이번 세션에서 아직 저장된 기록이 없습니다.";
+    return "이번 세션에서 아직 저장된 진행 기록이 없습니다.";
   }
+
   return new Intl.DateTimeFormat("ko-KR", {
     month: "short",
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function resolveLocalAdvanceResult(
+  choice: StoryChoice,
+  currentEpisode: StoryEpisode,
+  episodes: StoryEpisode[],
+  currentIndex: number,
+  progress: StoryProgress,
+): StoryAdvanceResult {
+  return {
+    title: choice.label,
+    detail: choice.result,
+    trustScore: clampScore(progress.trustScore + choice.trustDelta),
+    hypeScore: clampScore(progress.hypeScore + choice.hypeDelta),
+    nextEpisodeId:
+      choice.nextEpisodeId ??
+      episodes[Math.min(currentIndex + 1, episodes.length - 1)]?.id ??
+      currentEpisode.id,
+  };
 }
 
 export function StoryPlayerShell({ work, episodes }: StoryPlayerShellProps) {
@@ -81,23 +105,34 @@ export function StoryPlayerShell({ work, episodes }: StoryPlayerShellProps) {
 
     try {
       const parsed = JSON.parse(stored) as StoryProgress;
-      if (parsed.currentEpisodeId) {
+      if (
+        parsed.currentEpisodeId &&
+        episodes.some((episode) => episode.id === parsed.currentEpisodeId)
+      ) {
         setProgress(parsed);
+        return;
       }
     } catch {
-      window.localStorage.removeItem(storageKey(work.id));
+      // Ignore invalid persisted state and reset below.
     }
-  }, [work.id]);
+
+    const initial = createInitialProgress(episodes);
+    setProgress(initial);
+    window.localStorage.setItem(storageKey(work.id), JSON.stringify(initial));
+  }, [episodes, work.id]);
 
   const currentEpisode = useMemo(
     () =>
-      episodes.find((episode) => episode.id === progress.currentEpisodeId) ?? episodes[0] ?? null,
+      episodes.find((episode) => episode.id === progress.currentEpisodeId) ??
+      episodes[0] ??
+      null,
     [episodes, progress.currentEpisodeId],
   );
   const currentIndex = currentEpisode
     ? Math.max(episodes.findIndex((episode) => episode.id === currentEpisode.id), 0)
     : 0;
-  const completion = episodes.length > 0 ? Math.round(((currentIndex + 1) / episodes.length) * 100) : 0;
+  const completion =
+    episodes.length > 0 ? Math.round(((currentIndex + 1) / episodes.length) * 100) : 0;
   const latestLog = progress.log[0] ?? null;
   const finaleReached =
     Boolean(currentEpisode) &&
@@ -129,17 +164,23 @@ export function StoryPlayerShell({ work, episodes }: StoryPlayerShellProps) {
 
     setPendingChoiceId(null);
 
-    if (!response) {
-      setMessage("스토리 진행에 실패했습니다. 잠시 후 다시 시도해 주세요.");
-      return;
-    }
+    const resolvedResponse =
+      response ??
+      resolveLocalAdvanceResult(choice, currentEpisode, episodes, currentIndex, progress);
+
+    setMessage(
+      response
+        ? ""
+        : "백엔드 연결이 없어도 로컬 스토리 엔진으로 이어서 진행합니다.",
+    );
 
     const nextEpisode =
-      episodes.find((episode) => episode.id === response.nextEpisodeId) ?? currentEpisode;
+      episodes.find((episode) => episode.id === resolvedResponse.nextEpisodeId) ??
+      currentEpisode;
     const nextProgress: StoryProgress = {
       currentEpisodeId: nextEpisode.id,
-      trustScore: response.trustScore,
-      hypeScore: response.hypeScore,
+      trustScore: resolvedResponse.trustScore,
+      hypeScore: resolvedResponse.hypeScore,
       updatedAt: new Date().toISOString(),
       log: [
         {
@@ -147,10 +188,10 @@ export function StoryPlayerShell({ work, episodes }: StoryPlayerShellProps) {
           episodeTitle: currentEpisode.title,
           choiceId: choice.id,
           choiceLabel: choice.label,
-          resultTitle: response.title,
-          resultDetail: response.detail,
-          trustScore: response.trustScore,
-          hypeScore: response.hypeScore,
+          resultTitle: resolvedResponse.title,
+          resultDetail: resolvedResponse.detail,
+          trustScore: resolvedResponse.trustScore,
+          hypeScore: resolvedResponse.hypeScore,
           createdAt: new Date().toISOString(),
         },
         ...progress.log,
@@ -164,7 +205,6 @@ export function StoryPlayerShell({ work, episodes }: StoryPlayerShellProps) {
     const nextProgress = createInitialProgress(episodes);
     setMessage("");
     persistProgress(nextProgress);
-    window.localStorage.removeItem(storageKey(work.id));
   };
 
   if (!currentEpisode) {
@@ -200,8 +240,8 @@ export function StoryPlayerShell({ work, episodes }: StoryPlayerShellProps) {
             <div className="grid gap-3 sm:grid-cols-3">
               {[
                 ["진행률", `${completion}%`, `${currentIndex + 1} / ${episodes.length} 장면`],
-                ["신뢰", String(progress.trustScore), "캐릭터와 세계관 동조도"],
-                ["하이프", String(progress.hypeScore), "장면 긴장감과 확장성"],
+                ["신뢰", String(progress.trustScore), "캐릭터와 세계가 당신을 믿는 정도"],
+                ["하이프", String(progress.hypeScore), "서사의 긴장감과 폭발력"],
               ].map(([label, value, detail]) => (
                 <div
                   key={label}
@@ -231,12 +271,12 @@ export function StoryPlayerShell({ work, episodes }: StoryPlayerShellProps) {
             >
               작품 상세
             </Link>
-            <Link
+            <a
               href="/?tab=story"
               className="rounded-full border border-white/10 px-4 py-2 text-sm text-white/74"
             >
               스토리 홈
-            </Link>
+            </a>
             <button
               type="button"
               onClick={restart}
@@ -312,7 +352,8 @@ export function StoryPlayerShell({ work, episodes }: StoryPlayerShellProps) {
               {message && <div className="mt-4 text-sm text-[#ffd8c2]">{message}</div>}
               {finaleReached && (
                 <div className="mt-4 rounded-[1.4rem] border border-white/10 bg-white/5 px-4 py-4 text-sm leading-7 text-white/72">
-                  마지막 장면까지 도달했습니다. 지금부터는 엔딩 분기 리치와 결과 보드를 붙이면 시즌 완결 루프가 완성됩니다.
+                  마지막 장면까지 도달했습니다. 다음 단계에서는 엔딩 분기 리포트와 결과
+                  보드를 붙여 시즌 단위 리텐션 루프까지 확장할 수 있습니다.
                 </div>
               )}
             </div>
@@ -335,18 +376,21 @@ export function StoryPlayerShell({ work, episodes }: StoryPlayerShellProps) {
                   <div className="mt-2 text-lg font-semibold text-white">{work.metrics.concurrent}</div>
                 </div>
                 <div className="rounded-[1.4rem] border border-white/10 bg-[#0d1520] p-4">
-                  <div className="text-sm text-white/52">전환 훅</div>
+                  <div className="text-sm text-white/52">전환율</div>
                   <div className="mt-2 text-lg font-semibold text-white">{work.metrics.conversion}</div>
                 </div>
               </div>
             </div>
 
             <div className="rounded-[2rem] border border-white/10 bg-[rgba(255,255,255,0.04)] p-6">
-              <div className="text-xs uppercase tracking-[0.2em] text-white/46">Decision Ledger</div>
+              <div className="text-xs uppercase tracking-[0.2em] text-white/46">
+                Decision Ledger
+              </div>
               <div className="mt-4 space-y-3">
                 {progress.log.length === 0 && (
                   <div className="rounded-[1.4rem] border border-dashed border-white/12 px-4 py-5 text-sm text-white/56">
-                    아직 기록된 선택이 없습니다. 첫 선택을 누르면 선택 로그와 이어보기 상태가 저장됩니다.
+                    아직 기록된 선택이 없습니다. 첫 선택을 누르면 로그와 이어보기가
+                    저장됩니다.
                   </div>
                 )}
                 {progress.log.map((entry) => (
