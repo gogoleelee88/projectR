@@ -40,4 +40,5 @@ This file is the working order of execution. Items are implemented in sequence a
 - Added: profile API, saved library API, home feed save buttons, detail save toggle, profile drawer
 - Completed: Step 2 `Story Play UI`
 - Added: dedicated `/story/[workId]` player, local continue state, story API-driven choice progression
+- Refined: `millennium` upgraded to a curated campaign with chapter map, objective board, cast rail, and ending report
 - Next: Step 3 `Character Chat UI`
