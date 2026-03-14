@@ -43,4 +43,4 @@ This file is the working order of execution. Items are implemented in sequence a
 - Refined: `millennium` upgraded to a curated campaign with chapter map, objective board, cast rail, and ending report
 - Refined: story runtime now stores completed runs, replay suggestions, and season report stats
 - Refined: logged-in players now sync story progress to the API and unlock ending rewards with spark payouts
-- Next: Step 3 `Character Chat UI`
+- Refined: dedicated character chat player now supports account sync, bond progression, and unlock rewards

@@ -12,6 +12,7 @@ from .db import (
     authenticate_user,
     bootstrap_database,
     build_chat_reply,
+    continue_character_chat,
     create_auth_session,
     create_checkout,
     create_preset_session,
@@ -19,6 +20,7 @@ from .db import (
     create_user,
     fetch_bootstrap_payload,
     generate_image_shot,
+    get_character_chat_state,
     get_feed_item,
     get_story_progress_state,
     get_user_profile,
@@ -46,6 +48,9 @@ from .runtime import request_live_chat, request_live_checkout, request_live_imag
 from .schemas import (
     AuthSessionResponse,
     BillingPlanResponse,
+    CharacterChatSendRequest,
+    CharacterChatSendResponse,
+    CharacterChatStateResponse,
     ChatRequest,
     ChatResponse,
     CheckoutRequest,
@@ -109,6 +114,69 @@ def _require_session_user(authorization: str | None) -> dict:
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid session")
     return user
+
+
+def _serialize_character_chat_state(payload: dict) -> CharacterChatStateResponse:
+    return CharacterChatStateResponse.model_validate(
+        {
+            "characterId": payload["character_id"],
+            "characterName": payload["character_name"],
+            "role": payload["role"],
+            "vibe": payload["vibe"],
+            "opener": payload["opener"],
+            "affinityScore": payload["affinity_score"],
+            "bondLevel": payload["bond_level"],
+            "conversationCount": payload["conversation_count"],
+            "streakCount": payload["streak_count"],
+            "lastTone": payload["last_tone"],
+            "lastMessageAt": payload["last_message_at"],
+            "messages": [
+                {
+                    "id": message["id"],
+                    "sender": message["sender"],
+                    "text": message["text"],
+                    "tone": message["tone"],
+                    "createdAt": message["created_at"],
+                }
+                for message in payload["messages"]
+            ],
+            "unlockedRewards": [
+                {
+                    "id": reward["id"],
+                    "rewardId": reward["reward_id"],
+                    "title": reward["title"],
+                    "summary": reward["summary"],
+                    "affinityThreshold": reward["affinity_threshold"],
+                    "sparksAwarded": reward["sparks_awarded"],
+                    "unlockedAt": reward["unlocked_at"],
+                }
+                for reward in payload["unlocked_rewards"]
+            ],
+            "nextReward": None
+            if payload["next_reward"] is None
+            else {
+                "rewardId": payload["next_reward"]["reward_id"],
+                "title": payload["next_reward"]["title"],
+                "summary": payload["next_reward"]["summary"],
+                "affinityThreshold": payload["next_reward"]["affinity_threshold"],
+                "remainingAffinity": payload["next_reward"]["remaining_affinity"],
+                "sparksAwarded": payload["next_reward"]["sparks_awarded"],
+            },
+            "totalSparks": payload["total_sparks"],
+            "latestRewardGrant": None
+            if payload["latest_reward_grant"] is None
+            else {
+                "awarded": payload["latest_reward_grant"]["awarded"],
+                "rewardId": payload["latest_reward_grant"]["reward_id"],
+                "title": payload["latest_reward_grant"]["title"],
+                "summary": payload["latest_reward_grant"]["summary"],
+                "sparksAwarded": payload["latest_reward_grant"]["sparks_awarded"],
+                "affinityThreshold": payload["latest_reward_grant"]["affinity_threshold"],
+                "grantedAt": payload["latest_reward_grant"]["granted_at"],
+            },
+            "syncedAt": payload["synced_at"],
+        }
+    )
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -549,6 +617,19 @@ def characters() -> list[dict]:
     return list_characters()
 
 
+@app.get("/chat/state", response_model=CharacterChatStateResponse)
+def chat_state(
+    character_id: str = Query(alias="characterId"),
+    authorization: str | None = Header(default=None),
+) -> CharacterChatStateResponse:
+    user = _require_session_user(authorization)
+    try:
+        payload = get_character_chat_state(user["id"], character_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _serialize_character_chat_state(payload)
+
+
 @app.post("/chat/respond", response_model=ChatResponse)
 def chat_respond(payload: ChatRequest) -> ChatResponse:
     characters = {character["id"]: character for character in list_characters()}
@@ -581,6 +662,62 @@ def chat_respond(payload: ChatRequest) -> ChatResponse:
             "characterName": response["character_name"],
             "reply": response["reply"],
             "tone": response["tone"],
+        }
+    )
+
+
+@app.post("/chat/sessions/respond", response_model=CharacterChatSendResponse)
+def chat_session_respond(
+    payload: CharacterChatSendRequest,
+    authorization: str | None = Header(default=None),
+) -> CharacterChatSendResponse:
+    user = _require_session_user(authorization)
+    characters = {character["id"]: character for character in list_characters()}
+    active_character = characters.get(payload.character_id)
+    live_response = None
+    if active_character is not None:
+        try:
+            state_payload = get_character_chat_state(user["id"], payload.character_id)
+        except ValueError:
+            state_payload = None
+        live_response = request_live_chat(
+            character_id=payload.character_id,
+            character_name=active_character["name"],
+            message=payload.message,
+            turn_index=0 if state_payload is None else state_payload["conversation_count"],
+        )
+
+    try:
+        result = continue_character_chat(
+            user["id"],
+            character_id=payload.character_id,
+            message=payload.message,
+            live_response=live_response,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return CharacterChatSendResponse.model_validate(
+        {
+            "characterId": result["character_id"],
+            "characterName": result["character_name"],
+            "reply": result["reply"],
+            "tone": result["tone"],
+            "affinityDelta": result["affinity_delta"],
+            "state": _serialize_character_chat_state(result["state"]).model_dump(
+                by_alias=True
+            ),
+            "latestRewardGrant": None
+            if result["latest_reward_grant"] is None
+            else {
+                "awarded": result["latest_reward_grant"]["awarded"],
+                "rewardId": result["latest_reward_grant"]["reward_id"],
+                "title": result["latest_reward_grant"]["title"],
+                "summary": result["latest_reward_grant"]["summary"],
+                "sparksAwarded": result["latest_reward_grant"]["sparks_awarded"],
+                "affinityThreshold": result["latest_reward_grant"]["affinity_threshold"],
+                "grantedAt": result["latest_reward_grant"]["granted_at"],
+            },
         }
     )
 

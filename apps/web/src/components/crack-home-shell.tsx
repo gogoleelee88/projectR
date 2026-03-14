@@ -461,6 +461,14 @@ export function CrackHomeShell({ initialData }: Props) {
                       스토리 플레이
                     </a>
                   )}
+                  {continueCard.kind === "character" && (
+                    <Link
+                      href={`/character/${continueCard.id}`}
+                      className="rounded-full border border-white/10 px-4 py-2 text-sm text-white/72"
+                    >
+                      채팅 시작
+                    </Link>
+                  )}
                   <button type="button" onClick={() => void toggleSave(continueCard)} className={`rounded-full px-4 py-2 text-sm ${savedLookup.has(savedKey(continueCard.kind, continueCard.id)) ? "bg-[rgba(247,107,28,0.18)] text-[#fff0dc]" : "border border-white/10 text-white/72"}`}>{savedLookup.has(savedKey(continueCard.kind, continueCard.id)) ? "저장됨" : "저장"}</button>
                 </div>
               )}
@@ -511,6 +519,14 @@ export function CrackHomeShell({ initialData }: Props) {
                         플레이
                       </a>
                     )}
+                    {card.kind === "character" && (
+                      <Link
+                        href={`/character/${card.id}`}
+                        className="mt-4 inline-flex rounded-full border border-white/10 px-3 py-2 text-xs text-white/72"
+                      >
+                        채팅 시작
+                      </Link>
+                    )}
                   </article>
                 </div>
               );
@@ -541,6 +557,14 @@ export function CrackHomeShell({ initialData }: Props) {
                         </Link>
                         <button type="button" onClick={() => void toggleSave(item)} className={`rounded-full px-3 py-2 text-xs ${isSaved ? "bg-[rgba(247,107,28,0.18)] text-[#fff0dc]" : "border border-white/10 bg-white/5 text-white/72"}`}>{isSaved ? "저장됨" : "저장"}</button>
                       </div>
+                      {item.kind === "character" && (
+                        <Link
+                          href={`/character/${item.id}`}
+                          className="mt-4 inline-flex rounded-full border border-white/10 px-3 py-2 text-xs text-white/72"
+                        >
+                          채팅 시작
+                        </Link>
+                      )}
                     </div>
                   );
                 })}

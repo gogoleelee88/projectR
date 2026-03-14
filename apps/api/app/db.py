@@ -40,6 +40,54 @@ PARTY_ACTIONS = {
 }
 FIRST_CLEAR_SPARKS = 320
 ENCORE_CLEAR_SPARKS = 90
+CHAT_REWARD_CATALOG = {
+    "astra": [
+        {
+            "id": "orbit-key",
+            "title": "Orbit Key Memory",
+            "summary": "Astra opens a private orbit memory drop with behind-the-scene notes.",
+            "affinity_threshold": 18,
+            "sparks_awarded": 180,
+        },
+        {
+            "id": "inner-ring",
+            "title": "Inner Ring Voice Drop",
+            "summary": "Astra unlocks an intimate voice-note style confession track.",
+            "affinity_threshold": 42,
+            "sparks_awarded": 320,
+        },
+        {
+            "id": "zero-g-vow",
+            "title": "Zero-G Vow Route",
+            "summary": "Astra opens the premium vow route with long-arc callbacks.",
+            "affinity_threshold": 72,
+            "sparks_awarded": 560,
+        },
+    ],
+    "noir": [
+        {
+            "id": "black-card",
+            "title": "Black Card Pass",
+            "summary": "Noir grants access to the private market after-hours channel.",
+            "affinity_threshold": 16,
+            "sparks_awarded": 160,
+        },
+        {
+            "id": "velvet-deal",
+            "title": "Velvet Deal",
+            "summary": "Noir opens a premium deal room with risk-heavy prompts.",
+            "affinity_threshold": 40,
+            "sparks_awarded": 300,
+        },
+        {
+            "id": "midnight-contract",
+            "title": "Midnight Contract",
+            "summary": "Noir unlocks the top-tier contract route with loyalty callbacks.",
+            "affinity_threshold": 70,
+            "sparks_awarded": 540,
+        },
+    ],
+}
 
 
 def utc_now() -> str:
@@ -276,6 +324,46 @@ def bootstrap_database() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_story_ending_unlocks_user_work_last_cleared_at
                 ON story_ending_unlocks (user_id, work_id, last_cleared_at DESC);
+            CREATE TABLE IF NOT EXISTS character_relationships (
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+                affinity_score INTEGER NOT NULL,
+                bond_level TEXT NOT NULL,
+                conversation_count INTEGER NOT NULL,
+                streak_count INTEGER NOT NULL,
+                last_tone TEXT NOT NULL,
+                last_user_message TEXT NOT NULL,
+                last_character_reply TEXT NOT NULL,
+                last_message_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, character_id)
+            );
+            CREATE TABLE IF NOT EXISTS character_messages (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+                sender TEXT NOT NULL,
+                message_text TEXT NOT NULL,
+                tone TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_character_messages_user_character_created_at
+                ON character_messages (user_id, character_id, created_at);
+            CREATE TABLE IF NOT EXISTS character_reward_unlocks (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+                reward_id TEXT NOT NULL,
+                reward_title TEXT NOT NULL,
+                reward_summary TEXT NOT NULL,
+                affinity_threshold INTEGER NOT NULL,
+                sparks_awarded INTEGER NOT NULL,
+                unlocked_at TEXT NOT NULL,
+                UNIQUE (user_id, character_id, reward_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_character_reward_unlocks_user_character_unlocked_at
+                ON character_reward_unlocks (user_id, character_id, unlocked_at DESC);
             """
         )
         _seed_database(connection)
@@ -1240,6 +1328,435 @@ def build_chat_reply(character_id: str, message: str, turn_index: int) -> dict |
             "reply": responses[turn_index % len(responses)]["response_text"],
             "tone": tone,
         }
+
+
+def _get_character_reward_catalog(character_id: str) -> list[dict]:
+    rewards = CHAT_REWARD_CATALOG.get(character_id)
+    if rewards:
+        return rewards
+
+    return [
+        {
+            "id": "warm-signal",
+            "title": "Warm Signal",
+            "summary": "A personal callback route opens for this character.",
+            "affinity_threshold": 18,
+            "sparks_awarded": 160,
+        },
+        {
+            "id": "inner-circle",
+            "title": "Inner Circle",
+            "summary": "A stronger memory callback set unlocks for repeat conversations.",
+            "affinity_threshold": 42,
+            "sparks_awarded": 300,
+        },
+        {
+            "id": "signature-route",
+            "title": "Signature Route",
+            "summary": "The premium relationship route is now unlocked.",
+            "affinity_threshold": 70,
+            "sparks_awarded": 520,
+        },
+    ]
+
+
+def _bond_level_for_affinity(score: int) -> str:
+    if score >= 70:
+        return "Locked Constellation"
+    if score >= 42:
+        return "Inner Ring"
+    if score >= 18:
+        return "Open Orbit"
+    return "Signal Warm-up"
+
+
+def _calculate_affinity_gain(message: str, tone: str, conversation_count: int) -> int:
+    base_gain = {"calm": 6, "intense": 8, "intimate": 11}.get(tone, 6)
+    lower_message = message.lower()
+    bonus = 0
+
+    if len(message.strip()) >= 40:
+        bonus += 2
+    if "?" in message:
+        bonus += 1
+    if conversation_count == 0:
+        bonus += 2
+    if any(
+        keyword in lower_message
+        for keyword in (
+            "trust",
+            "remember",
+            "again",
+            "stay",
+            "promise",
+            "secret",
+            "always",
+            "좋아",
+            "기억",
+            "비밀",
+            "약속",
+            "사랑",
+        )
+    ):
+        bonus += 3
+
+    return min(16, base_gain + bonus)
+
+
+def _serialize_character_message(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "sender": row["sender"],
+        "text": row["message_text"],
+        "tone": row["tone"],
+        "created_at": row["created_at"],
+    }
+
+
+def _serialize_character_reward(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "reward_id": row["reward_id"],
+        "title": row["reward_title"],
+        "summary": row["reward_summary"],
+        "affinity_threshold": row["affinity_threshold"],
+        "sparks_awarded": row["sparks_awarded"],
+        "unlocked_at": row["unlocked_at"],
+    }
+
+
+def _build_character_chat_payload(
+    connection: sqlite3.Connection,
+    user_id: str,
+    character_id: str,
+    latest_reward_grant: dict | None = None,
+) -> dict:
+    character_row = connection.execute(
+        """
+        SELECT id, name, role, vibe, opener
+        FROM characters
+        WHERE id = ?
+        """,
+        (character_id,),
+    ).fetchone()
+    if character_row is None:
+        raise ValueError("Character not found")
+
+    relationship_row = connection.execute(
+        """
+        SELECT *
+        FROM character_relationships
+        WHERE user_id = ? AND character_id = ?
+        """,
+        (user_id, character_id),
+    ).fetchone()
+    message_rows = connection.execute(
+        """
+        SELECT id, user_id, character_id, sender, message_text, tone, created_at
+        FROM (
+            SELECT rowid AS message_order, *
+            FROM character_messages
+            WHERE user_id = ? AND character_id = ?
+            ORDER BY message_order DESC
+            LIMIT 48
+        )
+        ORDER BY message_order ASC
+        """,
+        (user_id, character_id),
+    ).fetchall()
+    reward_rows = connection.execute(
+        """
+        SELECT *
+        FROM character_reward_unlocks
+        WHERE user_id = ? AND character_id = ?
+        ORDER BY unlocked_at DESC
+        """,
+        (user_id, character_id),
+    ).fetchall()
+    user_row = connection.execute(
+        "SELECT sparks FROM users WHERE id = ?",
+        (user_id,),
+    ).fetchone()
+
+    affinity_score = 0 if relationship_row is None else relationship_row["affinity_score"]
+    unlocked_reward_ids = {row["reward_id"] for row in reward_rows}
+    next_reward = next(
+        (
+            reward
+            for reward in _get_character_reward_catalog(character_id)
+            if reward["id"] not in unlocked_reward_ids and reward["affinity_threshold"] > affinity_score
+        ),
+        None,
+    )
+
+    return {
+        "character_id": character_row["id"],
+        "character_name": character_row["name"],
+        "role": character_row["role"],
+        "vibe": character_row["vibe"],
+        "opener": character_row["opener"],
+        "affinity_score": affinity_score,
+        "bond_level": (
+            _bond_level_for_affinity(affinity_score)
+            if relationship_row is None
+            else relationship_row["bond_level"]
+        ),
+        "conversation_count": 0
+        if relationship_row is None
+        else relationship_row["conversation_count"],
+        "streak_count": 0 if relationship_row is None else relationship_row["streak_count"],
+        "last_tone": "calm" if relationship_row is None else relationship_row["last_tone"],
+        "last_message_at": ""
+        if relationship_row is None
+        else relationship_row["last_message_at"],
+        "messages": [_serialize_character_message(row) for row in message_rows],
+        "unlocked_rewards": [_serialize_character_reward(row) for row in reward_rows],
+        "next_reward": None
+        if next_reward is None
+        else {
+            "reward_id": next_reward["id"],
+            "title": next_reward["title"],
+            "summary": next_reward["summary"],
+            "affinity_threshold": next_reward["affinity_threshold"],
+            "remaining_affinity": max(0, next_reward["affinity_threshold"] - affinity_score),
+            "sparks_awarded": next_reward["sparks_awarded"],
+        },
+        "total_sparks": 0 if user_row is None else user_row["sparks"],
+        "latest_reward_grant": latest_reward_grant,
+        "synced_at": utc_now(),
+    }
+
+
+def _record_character_reward_unlocks(
+    connection: sqlite3.Connection,
+    *,
+    user_id: str,
+    character_id: str,
+    affinity_score: int,
+) -> dict | None:
+    granted_payload: dict | None = None
+
+    for reward in _get_character_reward_catalog(character_id):
+        if affinity_score < reward["affinity_threshold"]:
+            continue
+
+        existing_row = connection.execute(
+            """
+            SELECT id
+            FROM character_reward_unlocks
+            WHERE user_id = ? AND character_id = ? AND reward_id = ?
+            """,
+            (user_id, character_id, reward["id"]),
+        ).fetchone()
+        if existing_row is not None:
+            continue
+
+        unlock_id = str(uuid4())
+        unlocked_at = utc_now()
+        connection.execute(
+            """
+            INSERT INTO character_reward_unlocks (
+                id,
+                user_id,
+                character_id,
+                reward_id,
+                reward_title,
+                reward_summary,
+                affinity_threshold,
+                sparks_awarded,
+                unlocked_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                unlock_id,
+                user_id,
+                character_id,
+                reward["id"],
+                reward["title"],
+                reward["summary"],
+                reward["affinity_threshold"],
+                reward["sparks_awarded"],
+                unlocked_at,
+            ),
+        )
+        connection.execute(
+            "UPDATE users SET sparks = sparks + ? WHERE id = ?",
+            (reward["sparks_awarded"], user_id),
+        )
+        granted_payload = {
+            "awarded": True,
+            "reward_id": reward["id"],
+            "title": reward["title"],
+            "summary": reward["summary"],
+            "sparks_awarded": reward["sparks_awarded"],
+            "affinity_threshold": reward["affinity_threshold"],
+            "granted_at": unlocked_at,
+        }
+
+    return granted_payload
+
+
+def get_character_chat_state(user_id: str, character_id: str) -> dict:
+    with get_connection() as connection:
+        return _build_character_chat_payload(connection, user_id, character_id)
+
+
+def continue_character_chat(
+    user_id: str,
+    *,
+    character_id: str,
+    message: str,
+    live_response: dict | None = None,
+) -> dict:
+    normalized_message = message.strip()
+    if not normalized_message:
+        raise ValueError("Message is required")
+
+    with get_connection() as connection:
+        user_row = connection.execute(
+            "SELECT id FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        if user_row is None:
+            raise ValueError("User not found")
+
+        relationship_row = connection.execute(
+            """
+            SELECT *
+            FROM character_relationships
+            WHERE user_id = ? AND character_id = ?
+            """,
+            (user_id, character_id),
+        ).fetchone()
+        conversation_count = (
+            0 if relationship_row is None else relationship_row["conversation_count"]
+        )
+
+    response = live_response or build_chat_reply(character_id, normalized_message, conversation_count)
+    if response is None:
+        raise ValueError("Character not found")
+
+    with get_connection() as connection:
+        relationship_row = connection.execute(
+            """
+            SELECT *
+            FROM character_relationships
+            WHERE user_id = ? AND character_id = ?
+            """,
+            (user_id, character_id),
+        ).fetchone()
+        conversation_count = (
+            0 if relationship_row is None else relationship_row["conversation_count"]
+        )
+        affinity_score = 0 if relationship_row is None else relationship_row["affinity_score"]
+        affinity_delta = _calculate_affinity_gain(
+            normalized_message,
+            response["tone"],
+            conversation_count,
+        )
+        next_affinity_score = min(100, affinity_score + affinity_delta)
+        now = utc_now()
+        next_streak = min(
+            7,
+            (1 if relationship_row is None else relationship_row["streak_count"] + 1),
+        )
+        bond_level = _bond_level_for_affinity(next_affinity_score)
+
+        connection.execute(
+            """
+            INSERT INTO character_messages (id, user_id, character_id, sender, message_text, tone, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid4()),
+                user_id,
+                character_id,
+                "user",
+                normalized_message,
+                response["tone"],
+                now,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO character_messages (id, user_id, character_id, sender, message_text, tone, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid4()),
+                user_id,
+                character_id,
+                "character",
+                response["reply"],
+                response["tone"],
+                now,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO character_relationships (
+                user_id,
+                character_id,
+                affinity_score,
+                bond_level,
+                conversation_count,
+                streak_count,
+                last_tone,
+                last_user_message,
+                last_character_reply,
+                last_message_at,
+                created_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, character_id) DO UPDATE SET
+                affinity_score = excluded.affinity_score,
+                bond_level = excluded.bond_level,
+                conversation_count = excluded.conversation_count,
+                streak_count = excluded.streak_count,
+                last_tone = excluded.last_tone,
+                last_user_message = excluded.last_user_message,
+                last_character_reply = excluded.last_character_reply,
+                last_message_at = excluded.last_message_at,
+                updated_at = excluded.updated_at
+            """,
+            (
+                user_id,
+                character_id,
+                next_affinity_score,
+                bond_level,
+                conversation_count + 1,
+                next_streak,
+                response["tone"],
+                normalized_message,
+                response["reply"],
+                now,
+                now if relationship_row is None else relationship_row["created_at"],
+                now,
+            ),
+        )
+        latest_reward_grant = _record_character_reward_unlocks(
+            connection,
+            user_id=user_id,
+            character_id=character_id,
+            affinity_score=next_affinity_score,
+        )
+        connection.commit()
+        state = _build_character_chat_payload(
+            connection,
+            user_id,
+            character_id,
+            latest_reward_grant=latest_reward_grant,
+        )
+
+    return {
+        "character_id": response["character_id"],
+        "character_name": response["character_name"],
+        "reply": response["reply"],
+        "tone": response["tone"],
+        "affinity_delta": affinity_delta,
+        "state": state,
+        "latest_reward_grant": latest_reward_grant,
+    }
 
 
 def list_party_scenarios() -> list[dict]:
