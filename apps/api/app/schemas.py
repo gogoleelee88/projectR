@@ -216,6 +216,84 @@ class ChatResponse(BaseModel):
     tone: str
 
 
+class CharacterChatMessageResponse(BaseModel):
+    id: str
+    sender: str
+    text: str
+    tone: str
+    created_at: str = Field(alias="createdAt")
+
+
+class CharacterRewardUnlockResponse(BaseModel):
+    id: str
+    reward_id: str = Field(alias="rewardId")
+    title: str
+    summary: str
+    affinity_threshold: int = Field(alias="affinityThreshold")
+    sparks_awarded: int = Field(alias="sparksAwarded")
+    unlocked_at: str = Field(alias="unlockedAt")
+
+
+class CharacterNextRewardResponse(BaseModel):
+    reward_id: str = Field(alias="rewardId")
+    title: str
+    summary: str
+    affinity_threshold: int = Field(alias="affinityThreshold")
+    remaining_affinity: int = Field(alias="remainingAffinity")
+    sparks_awarded: int = Field(alias="sparksAwarded")
+
+
+class CharacterRewardGrantResponse(BaseModel):
+    awarded: bool
+    reward_id: str = Field(alias="rewardId")
+    title: str
+    summary: str
+    sparks_awarded: int = Field(alias="sparksAwarded")
+    affinity_threshold: int = Field(alias="affinityThreshold")
+    granted_at: str = Field(alias="grantedAt")
+
+
+class CharacterChatStateResponse(BaseModel):
+    character_id: str = Field(alias="characterId")
+    character_name: str = Field(alias="characterName")
+    role: str
+    vibe: str
+    opener: str
+    affinity_score: int = Field(alias="affinityScore")
+    bond_level: str = Field(alias="bondLevel")
+    conversation_count: int = Field(alias="conversationCount")
+    streak_count: int = Field(alias="streakCount")
+    last_tone: str = Field(alias="lastTone")
+    last_message_at: str = Field(alias="lastMessageAt")
+    messages: list[CharacterChatMessageResponse]
+    unlocked_rewards: list[CharacterRewardUnlockResponse] = Field(alias="unlockedRewards")
+    next_reward: CharacterNextRewardResponse | None = Field(default=None, alias="nextReward")
+    total_sparks: int = Field(alias="totalSparks")
+    latest_reward_grant: CharacterRewardGrantResponse | None = Field(
+        default=None,
+        alias="latestRewardGrant",
+    )
+    synced_at: str = Field(alias="syncedAt")
+
+
+class CharacterChatSendRequest(BaseModel):
+    character_id: str = Field(alias="characterId")
+    message: str
+
+
+class CharacterChatSendResponse(BaseModel):
+    character_id: str = Field(alias="characterId")
+    character_name: str = Field(alias="characterName")
+    reply: str
+    tone: str
+    affinity_delta: int = Field(alias="affinityDelta")
+    state: CharacterChatStateResponse
+    latest_reward_grant: CharacterRewardGrantResponse | None = Field(
+        default=None,
+        alias="latestRewardGrant",
+    )
+
+
 class PartyResolveRequest(BaseModel):
     scenario_id: str = Field(alias="scenarioId")
     action: str

@@ -512,8 +512,8 @@ export function resolveCrackDetail(
       chips: ["감정형 채팅", "친밀도", "응답 풀"],
       accent: workAccents.character,
       primaryCta: {
-        label: "캐릭터 탭으로 돌아가기",
-        href: "/?tab=character",
+        label: "채팅 시작",
+        href: `/character/${character.id}`,
       },
       secondaryCta: {
         label: "홈으로",
