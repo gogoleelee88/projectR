@@ -527,3 +527,53 @@ class EconomyRedeemResponse(BaseModel):
     latest_entry: WalletLedgerEntryResponse = Field(alias="latestEntry")
     granted_item: EconomyInventoryItemResponse = Field(alias="grantedItem")
     synced_at: str = Field(alias="syncedAt")
+
+
+class PaymentIntentCreateRequest(BaseModel):
+    offer_id: str = Field(alias="offerId")
+    provider: str = "sandbox"
+    platform: str = "web"
+
+
+class PaymentIntentConfirmRequest(BaseModel):
+    receipt_token: str | None = Field(default=None, alias="receiptToken")
+    provider_reference: str | None = Field(default=None, alias="providerReference")
+    verification_payload: dict[str, object] | None = Field(
+        default=None,
+        alias="verificationPayload",
+    )
+
+
+class PaymentEventResponse(BaseModel):
+    id: str
+    intent_id: str = Field(alias="intentId")
+    event_type: str = Field(alias="eventType")
+    status: str
+    payload: dict[str, object]
+    created_at: str = Field(alias="createdAt")
+
+
+class PaymentIntentResponse(BaseModel):
+    id: str
+    user_id: str = Field(alias="userId")
+    offer_id: str = Field(alias="offerId")
+    provider: str
+    platform: str
+    status: str
+    amount: int
+    currency: str
+    client_secret: str = Field(alias="clientSecret")
+    receipt_token: str | None = Field(default=None, alias="receiptToken")
+    provider_reference: str | None = Field(default=None, alias="providerReference")
+    purchase_id: str | None = Field(default=None, alias="purchaseId")
+    subscription_id: str | None = Field(default=None, alias="subscriptionId")
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+    settled_at: str | None = Field(default=None, alias="settledAt")
+
+
+class PaymentIntentEnvelopeResponse(BaseModel):
+    intent: PaymentIntentResponse
+    offer: EconomyOfferResponse
+    events: list[PaymentEventResponse]
+    settlement: EconomyCheckoutResponse | None = None

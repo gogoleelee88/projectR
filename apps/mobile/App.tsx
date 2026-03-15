@@ -1,6 +1,7 @@
 import { StatusBar } from "expo-status-bar";
-import { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
+  Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -10,572 +11,343 @@ import {
   View,
 } from "react-native";
 
-type TabKey = "story" | "character" | "works" | "image";
-
-type Card = {
-  id: string;
-  title: string;
-  eyebrow: string;
-  summary: string;
-  meta: string;
-  chips: string[];
-  color: string;
+type Lane = "offers" | "vault" | "payments";
+type Session = { id: string; name: string; membership: string; sparks: number };
+type Offer = { id: string; name: string; summary: string; price: number; badge: string; grantSparks: number };
+type Redemption = { id: string; title: string; summary: string; sparksCost: number; badge: string };
+type InventoryItem = { id: string; title: string; summary: string; quantity: number; category: string };
+type LedgerEntry = { id: string; title: string; summary: string; amountDelta: number; balanceAfter: number; createdAt: string };
+type EconomyState = {
+  walletBalance: number;
+  membership: string;
+  inventory: InventoryItem[];
+  ledger: LedgerEntry[];
 };
+type PaymentIntent = { id: string; status: string; amount: number; provider: string; platform: string; updatedAt: string };
+type PaymentEvent = { id: string; eventType: string; status: string };
+type PaymentEnvelope = { intent: PaymentIntent; offer: Offer; events: PaymentEvent[] };
 
-const tabs: Array<{ key: TabKey; label: string; summary: string }> = [
-  { key: "story", label: "스토리", summary: "대형 세계관과 시즌형 플레이" },
-  { key: "character", label: "캐릭터", summary: "짧고 빠른 감정형 대화" },
-  { key: "works", label: "내 작품", summary: "연재와 스토어 운영" },
-  { key: "image", label: "이미지", summary: "장면 생성과 스타일 팩" },
-];
+const DEFAULT_API_BASE =
+  Platform.OS === "android" ? "http://10.0.2.2:8000" : "http://127.0.0.1:8000";
 
-const filters = ["공식 추천", "파티챗", "지금 인기", "신작", "완결", "스토어"];
-
-const sections: Record<
-  TabKey,
-  {
-    heading: string;
-    description: string;
-    cards: Card[];
+async function requestJson<T>(
+  apiBase: string,
+  path: string,
+  init?: RequestInit,
+  token?: string | null,
+): Promise<{ data: T | null; error: string | null }> {
+  try {
+    const headers = new Headers(init?.headers);
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    if (init?.body && !headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
+    const response = await fetch(`${apiBase}${path}`, { ...init, headers });
+    const payload = response.status === 204 ? null : await response.json().catch(() => null);
+    if (!response.ok) {
+      const detail =
+        payload && typeof payload === "object" && "detail" in payload
+          ? String(payload.detail)
+          : "Request failed";
+      return { data: null, error: detail };
+    }
+    return { data: payload as T, error: null };
+  } catch {
+    return { data: null, error: "Network request failed" };
   }
-> = {
-  story: {
-    heading: "지금 가장 먼저 열어볼 스토리",
-    description: "스토리 중심 홈 피드 구조를 모바일에도 먼저 맞춥니다.",
-    cards: [
-      {
-        id: "millennium",
-        title: "밀레니엄",
-        eyebrow: "스토리 오리지널",
-        summary: "문명 전체의 규칙을 결정하는 초대형 인터랙티브 스토리.",
-        meta: "연속 플레이 상위",
-        chips: ["세계관", "선택 누적", "장기기억"],
-        color: "#25326f",
-      },
-      {
-        id: "courtroom",
-        title: "사건번호 2024가단X",
-        eyebrow: "공식 추천",
-        summary: "긴장감 높은 판결형 서사를 카드 피드 상단에 노출하는 공식 큐레이션.",
-        meta: "주간 인기",
-        chips: ["법정", "공식", "파티 연계"],
-        color: "#6b2d3d",
-      },
-      {
-        id: "shogun",
-        title: "마교 말단에서 교주까지",
-        eyebrow: "무협 성장기",
-        summary: "이미지 다량 탑재형 장문 스토리 포맷.",
-        meta: "이미지 310장",
-        chips: ["무협", "성장", "고화질"],
-        color: "#285445",
-      },
-    ],
-  },
-  character: {
-    heading: "짧고 강하게 붙는 캐릭터",
-    description: "캐릭터 탭은 감정형 훅과 재방문 템포를 우선 보여 줍니다.",
-    cards: [
-      {
-        id: "astra",
-        title: "Astra: Orbit Confession",
-        eyebrow: "캐릭터 프리미엄",
-        summary: "친밀도와 기억이 누적되는 우주 항해사 캐릭터 루프.",
-        meta: "구독 전환 강세",
-        chips: ["친밀도", "기억", "프리미엄"],
-        color: "#1d4063",
-      },
-      {
-        id: "noir",
-        title: "누아르 브로커 룸",
-        eyebrow: "감정형 채팅",
-        summary: "짧은 문장과 위험한 분위기로 밀어붙이는 도시형 캐릭터.",
-        meta: "재방문 7분+",
-        chips: ["도시", "티키타카", "재방문"],
-        color: "#404867",
-      },
-      {
-        id: "sol",
-        title: "솔라 기록 담당관",
-        eyebrow: "공식 신작",
-        summary: "최근 대화를 기억해 다음 감정선을 바로 이어 붙이는 캐릭터.",
-        meta: "신작 급상승",
-        chips: ["공식", "신작", "회상"],
-        color: "#834260",
-      },
-    ],
-  },
-  works: {
-    heading: "내 작품과 운영 도구",
-    description: "내 작품 탭은 연재와 상품 운영이 한 피드에 보이는 구조를 따릅니다.",
-    cards: [
-      {
-        id: "season",
-        title: "장기 스토리 시즌 운영",
-        eyebrow: "내 작품",
-        summary: "회차 공개와 가격 설정을 한 페이지에서 관리하는 작품 콘솔.",
-        meta: "심사 대기 2건",
-        chips: ["연재", "공개", "판매"],
-        color: "#1e5362",
-      },
-      {
-        id: "fanclub",
-        title: "캐릭터 팬클럽 팩",
-        eyebrow: "스토어 상품",
-        summary: "전용 대화 모드와 이미지 보너스를 묶어 판매하는 팬 상품.",
-        meta: "스토어 전환 8.9%",
-        chips: ["스토어", "팬클럽", "한정"],
-        color: "#825b30",
-      },
-      {
-        id: "events",
-        title: "공지와 보상 이벤트",
-        eyebrow: "운영 보드",
-        summary: "신예 노출과 보너스 캐시 이벤트를 작품 단위로 연결합니다.",
-        meta: "이벤트 3개 진행",
-        chips: ["공지", "보상", "운영"],
-        color: "#345194",
-      },
-    ],
-  },
-  image: {
-    heading: "이미지 생성과 스타일 탐색",
-    description: "이미지 탭은 스타일 팩과 생성 진입 버튼을 동시에 전면 배치합니다.",
-    cards: [
-      {
-        id: "obsidian",
-        title: "Obsidian Neon",
-        eyebrow: "이미지 스타일",
-        summary: "도시 야경과 SF 장면에 강한 고대비 시네마틱 팩.",
-        meta: "공유 저장 18.2K",
-        chips: ["시안", "오렌지", "SF"],
-        color: "#123352",
-      },
-      {
-        id: "porcelain",
-        title: "Porcelain Bloom",
-        eyebrow: "인물 집중",
-        summary: "감정 컷과 로맨스형 썸네일에 강한 부드러운 톤.",
-        meta: "캐릭터 공유 상위",
-        chips: ["로즈", "감정 컷", "썸네일"],
-        color: "#895f68",
-      },
-      {
-        id: "verdant",
-        title: "Verdant Myth",
-        eyebrow: "동양 판타지",
-        summary: "무협과 제국형 작품의 장면 생성에 맞는 스타일.",
-        meta: "스토리 연동 추천",
-        chips: ["녹옥", "금색", "무협"],
-        color: "#3c6644",
-      },
-    ],
-  },
-};
+}
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<TabKey>("story");
-  const [activeFilter, setActiveFilter] = useState("공식 추천");
-  const [search, setSearch] = useState("");
+  const [lane, setLane] = useState<Lane>("offers");
+  const [apiBase, setApiBase] = useState(DEFAULT_API_BASE);
+  const [token, setToken] = useState<string | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [offers, setOffers] = useState<Offer[]>([]);
+  const [redemptions, setRedemptions] = useState<Redemption[]>([]);
+  const [economy, setEconomy] = useState<EconomyState | null>(null);
+  const [payments, setPayments] = useState<PaymentEnvelope[]>([]);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [message, setMessage] = useState("");
+  const [pendingId, setPendingId] = useState<string | null>(null);
 
-  const section = sections[activeTab];
-  const cards = useMemo(() => {
-    const query = search.trim().toLowerCase();
+  const premiumUnits = useMemo(
+    () => (economy ? economy.inventory.reduce((sum, item) => sum + item.quantity, 0) : 0),
+    [economy],
+  );
 
-    if (!query) {
-      return section.cards;
+  async function refreshCatalog() {
+    const result = await requestJson<{ offers: Offer[]; redemptions: Redemption[] }>(
+      apiBase,
+      "/economy/catalog",
+    );
+    if (result.data) {
+      setOffers(result.data.offers);
+      setRedemptions(result.data.redemptions);
+    }
+  }
+
+  async function refreshAccount(activeToken = token) {
+    if (!activeToken) {
+      setSession(null);
+      setEconomy(null);
+      setPayments([]);
+      return;
     }
 
-    return section.cards.filter((card) =>
-      [card.title, card.eyebrow, card.summary, card.meta, card.chips.join(" ")]
-        .join(" ")
-        .toLowerCase()
-        .includes(query),
+    const [sessionResult, economyResult, paymentResult] = await Promise.all([
+      requestJson<Session>(apiBase, "/auth/me", undefined, activeToken),
+      requestJson<EconomyState>(apiBase, "/economy/state", undefined, activeToken),
+      requestJson<PaymentEnvelope[]>(apiBase, "/payments/intents", undefined, activeToken),
+    ]);
+
+    if (sessionResult.data) setSession(sessionResult.data);
+    if (economyResult.data) setEconomy(economyResult.data);
+    if (paymentResult.data) setPayments(paymentResult.data);
+  }
+
+  useEffect(() => {
+    void refreshCatalog();
+    void refreshAccount(token);
+  }, [apiBase, token]);
+
+  async function handleAuth(mode: "register" | "login") {
+    const path = mode === "register" ? "/auth/register" : "/auth/login";
+    const body =
+      mode === "register"
+        ? { name: name || "Project R Player", email, password, role: "player" }
+        : { email, password };
+    const result = await requestJson<{ token: string; user: Session }>(apiBase, path, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    if (!result.data) {
+      setMessage(result.error ?? "Authentication failed.");
+      return;
+    }
+    setToken(result.data.token);
+    setSession(result.data.user);
+    setMessage(mode === "register" ? "Account created and synced." : "Logged in.");
+  }
+
+  async function handleLogout() {
+    if (token) {
+      await requestJson(apiBase, "/auth/session", { method: "DELETE" }, token);
+    }
+    setToken(null);
+    setSession(null);
+    setEconomy(null);
+    setPayments([]);
+    setMessage("Logged out.");
+  }
+
+  async function handleBuy(offer: Offer) {
+    if (!token) {
+      setMessage("Log in first to settle mobile purchases.");
+      return;
+    }
+    setPendingId(offer.id);
+    const provider =
+      Platform.OS === "android"
+        ? "play-billing-sandbox"
+        : Platform.OS === "ios"
+          ? "app-store-sandbox"
+          : "web-sandbox";
+    const createIntent = await requestJson<PaymentEnvelope>(
+      apiBase,
+      "/payments/intents",
+      {
+        method: "POST",
+        body: JSON.stringify({ offerId: offer.id, provider, platform: Platform.OS }),
+      },
+      token,
     );
-  }, [search, section.cards]);
+    if (!createIntent.data) {
+      setPendingId(null);
+      setMessage(createIntent.error ?? "Failed to create payment intent.");
+      return;
+    }
+
+    const receiptId = `${provider}-${offer.id}-${Date.now()}`;
+    const confirmIntent = await requestJson<PaymentEnvelope>(
+      apiBase,
+      `/payments/intents/${encodeURIComponent(createIntent.data.intent.id)}/confirm`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          receiptToken: `${receiptId}-receipt`,
+          providerReference: receiptId,
+          verificationPayload: { channel: "mobile", mode: "sandbox-auto-approve" },
+        }),
+      },
+      token,
+    );
+    setPendingId(null);
+    if (!confirmIntent.data) {
+      setMessage(confirmIntent.error ?? "Failed to confirm payment intent.");
+      return;
+    }
+
+    setMessage(`${offer.name} ${confirmIntent.data.intent.status}.`);
+    await refreshAccount(token);
+  }
+
+  async function handleRedeem(redemption: Redemption) {
+    if (!token) {
+      setMessage("Log in first to redeem sparks.");
+      return;
+    }
+    setPendingId(redemption.id);
+    const result = await requestJson<{ walletBalance: number }>(
+      apiBase,
+      `/economy/redemptions/${encodeURIComponent(redemption.id)}/redeem`,
+      { method: "POST" },
+      token,
+    );
+    setPendingId(null);
+    if (!result.data) {
+      setMessage(result.error ?? "Redemption failed.");
+      return;
+    }
+    setMessage(`${redemption.title} redeemed.`);
+    await refreshAccount(token);
+  }
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="light" />
       <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.eyebrow}>PROJECT R</Text>
-            <Text style={styles.headerTitle}>Crack Clone Mobile</Text>
-          </View>
-          <Pressable style={styles.loginButton}>
-            <Text style={styles.loginButtonText}>로그인</Text>
-          </Pressable>
-        </View>
+        <Text style={styles.eyebrow}>PROJECT R MOBILE</Text>
+        <Text style={styles.title}>Live store, wallet, and settlement lanes</Text>
 
-        <TextInput
-          value={search}
-          onChangeText={setSearch}
-          placeholder="스토리, 캐릭터, 태그 검색"
-          placeholderTextColor="rgba(255,255,255,0.34)"
-          style={styles.searchInput}
-        />
-
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabRow}>
-          {tabs.map((tab) => (
-            <Pressable
-              key={tab.key}
-              onPress={() => setActiveTab(tab.key)}
-              style={[styles.tabChip, activeTab === tab.key && styles.tabChipActive]}
-            >
-              <Text style={[styles.tabLabel, activeTab === tab.key && styles.tabLabelActive]}>
-                {tab.label}
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
-          {filters.map((filter) => (
-            <Pressable
-              key={filter}
-              onPress={() => setActiveFilter(filter)}
-              style={[styles.filterChip, activeFilter === filter && styles.filterChipActive]}
-            >
-              <Text style={styles.filterLabel}>{filter}</Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-
-        <View style={styles.heroStack}>
-          <View style={styles.loginCard}>
-            <Text style={styles.cardEyebrow}>계정</Text>
-            <Text style={styles.cardTitle}>로그인하고 이어보기</Text>
-            <Text style={styles.cardBody}>
-              최근 읽던 스토리와 찜한 캐릭터, 보관한 이미지 세트를 바로 이어 봅니다.
-            </Text>
-            <Pressable style={styles.primaryButton}>
-              <Text style={styles.primaryButtonText}>계정 연결</Text>
-            </Pressable>
-          </View>
-
-          <View style={styles.partyCard}>
-            <Text style={styles.cardEyebrow}>파티챗</Text>
-            <Text style={styles.partyTitle}>여럿이 함께 만드는 공식 멀티 스토리</Text>
-            <Text style={styles.cardBody}>
-              초대 코드, 턴별 액션 제출, AI 결과 요약이 홈 상단 핵심 배너로 들어오는 구조를 복제합니다.
-            </Text>
-            <View style={styles.partyMetrics}>
-              {[
-                ["라이브 룸", "1,280"],
-                ["초대 코드", "즉시"],
-                ["공식 시즌", "4개"],
-              ].map(([label, value]) => (
-                <View key={label} style={styles.metricCard}>
-                  <Text style={styles.metricLabel}>{label}</Text>
-                  <Text style={styles.metricValue}>{value}</Text>
-                </View>
-              ))}
-            </View>
+        <View style={styles.panel}>
+          <Text style={styles.panelTitle}>API Base</Text>
+          <TextInput value={apiBase} onChangeText={setApiBase} style={styles.input} autoCapitalize="none" />
+          <View style={styles.metrics}>
+            <View style={styles.metricCard}><Text style={styles.metricLabel}>Wallet</Text><Text style={styles.metricValue}>{economy ? economy.walletBalance : "Guest"}</Text></View>
+            <View style={styles.metricCard}><Text style={styles.metricLabel}>Premium</Text><Text style={styles.metricValue}>{premiumUnits}</Text></View>
+            <View style={styles.metricCard}><Text style={styles.metricLabel}>Intents</Text><Text style={styles.metricValue}>{payments.length}</Text></View>
           </View>
         </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionEyebrow}>{tabs.find((tab) => tab.key === activeTab)?.label}</Text>
-          <Text style={styles.sectionTitle}>{section.heading}</Text>
-          <Text style={styles.sectionBody}>{section.description}</Text>
-
-          {cards.map((card) => (
-            <View key={card.id} style={styles.feedCard}>
-              <View style={[styles.poster, { backgroundColor: card.color }]}>
-                <Text style={styles.posterEyebrow}>{card.eyebrow}</Text>
-                <Text style={styles.posterTitle}>{card.title}</Text>
+        <View style={styles.panel}>
+          <Text style={styles.panelTitle}>{session ? `${session.name} · ${session.membership}` : "Account lane"}</Text>
+          {!session ? (
+            <>
+              <TextInput value={name} onChangeText={setName} placeholder="Display name" placeholderTextColor="#7b8495" style={styles.input} />
+              <TextInput value={email} onChangeText={setEmail} placeholder="Email" placeholderTextColor="#7b8495" style={styles.input} autoCapitalize="none" />
+              <TextInput value={password} onChangeText={setPassword} placeholder="Password" placeholderTextColor="#7b8495" style={styles.input} secureTextEntry />
+              <View style={styles.row}>
+                <Pressable style={styles.primaryButton} onPress={() => void handleAuth("register")}><Text style={styles.primaryButtonText}>Register</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={() => void handleAuth("login")}><Text style={styles.secondaryButtonText}>Login</Text></Pressable>
               </View>
-              <Text style={styles.feedMeta}>{card.meta}</Text>
-              <Text style={styles.cardBody}>{card.summary}</Text>
-              <View style={styles.chipRow}>
-                {card.chips.map((chip) => (
-                  <View key={chip} style={styles.metaChip}>
-                    <Text style={styles.metaChipText}>{chip}</Text>
-                  </View>
-                ))}
-              </View>
+            </>
+          ) : (
+            <View style={styles.row}>
+              <Pressable style={styles.primaryButton} onPress={() => void refreshAccount(token)}><Text style={styles.primaryButtonText}>Refresh Sync</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => void handleLogout()}><Text style={styles.secondaryButtonText}>Logout</Text></Pressable>
             </View>
+          )}
+        </View>
+
+        <View style={styles.tabRow}>
+          {(["offers", "vault", "payments"] as Lane[]).map((entry) => (
+            <Pressable key={entry} onPress={() => setLane(entry)} style={[styles.tab, lane === entry && styles.tabActive]}>
+              <Text style={[styles.tabText, lane === entry && styles.tabTextActive]}>{entry.toUpperCase()}</Text>
+            </Pressable>
           ))}
         </View>
 
-        <View style={styles.footerNotice}>
-          <Text style={styles.footerTitle}>다음 단계</Text>
-          <Text style={styles.footerBody}>
-            카드 상세, 작품 상세, 실제 로그인 플로우, 서버 연동을 이 구조 위에 맞춰 이어 붙입니다.
-          </Text>
-        </View>
+        {message ? <Text style={styles.message}>{message}</Text> : null}
+
+        {lane === "offers" ? (
+          <>
+            {offers.map((offer) => (
+              <View key={offer.id} style={styles.card}>
+                <Text style={styles.cardEyebrow}>{offer.badge}</Text>
+                <Text style={styles.cardTitle}>{offer.name}</Text>
+                <Text style={styles.cardBody}>{offer.summary}</Text>
+                <Text style={styles.cardMeta}>{offer.grantSparks} sparks · KRW {offer.price}</Text>
+                <Pressable style={styles.primaryButton} onPress={() => void handleBuy(offer)} disabled={pendingId === offer.id}>
+                  <Text style={styles.primaryButtonText}>{pendingId === offer.id ? "Processing..." : "Create intent and settle"}</Text>
+                </Pressable>
+              </View>
+            ))}
+            {redemptions.map((redemption) => (
+              <View key={redemption.id} style={styles.card}>
+                <Text style={styles.cardEyebrow}>{redemption.badge}</Text>
+                <Text style={styles.cardTitle}>{redemption.title}</Text>
+                <Text style={styles.cardBody}>{redemption.summary}</Text>
+                <Text style={styles.cardMeta}>{redemption.sparksCost} sparks</Text>
+                <Pressable style={styles.secondaryButton} onPress={() => void handleRedeem(redemption)} disabled={pendingId === redemption.id}>
+                  <Text style={styles.secondaryButtonText}>{pendingId === redemption.id ? "Processing..." : "Redeem"}</Text>
+                </Pressable>
+              </View>
+            ))}
+          </>
+        ) : null}
+
+        {lane === "vault" ? (
+          <>
+            {(economy?.inventory ?? []).map((item) => (
+              <View key={item.id} style={styles.card}>
+                <Text style={styles.cardTitle}>{item.title}</Text>
+                <Text style={styles.cardBody}>{item.summary}</Text>
+                <Text style={styles.cardMeta}>{item.category} · x{item.quantity}</Text>
+              </View>
+            ))}
+            {(economy?.ledger ?? []).slice(0, 8).map((entry) => (
+              <View key={entry.id} style={styles.card}>
+                <Text style={styles.cardTitle}>{entry.title}</Text>
+                <Text style={styles.cardBody}>{entry.summary}</Text>
+                <Text style={styles.cardMeta}>{entry.amountDelta > 0 ? "+" : ""}{entry.amountDelta} sparks · balance {entry.balanceAfter}</Text>
+              </View>
+            ))}
+          </>
+        ) : null}
+
+        {lane === "payments" ? (
+          payments.map((payment) => (
+            <View key={payment.intent.id} style={styles.card}>
+              <Text style={styles.cardTitle}>{payment.offer.name}</Text>
+              <Text style={styles.cardBody}>{payment.intent.provider} · {payment.intent.platform}</Text>
+              <Text style={styles.cardMeta}>{payment.intent.status} · KRW {payment.intent.amount}</Text>
+              <Text style={styles.cardBody}>{payment.events.map((event) => event.eventType).join(" -> ")}</Text>
+            </View>
+          ))
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: "#080b12",
-  },
-  content: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 36,
-    gap: 16,
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  eyebrow: {
-    color: "#ffb978",
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 2.2,
-  },
-  headerTitle: {
-    marginTop: 6,
-    color: "#ffffff",
-    fontSize: 24,
-    fontWeight: "800",
-  },
-  loginButton: {
-    borderRadius: 999,
-    backgroundColor: "#ffffff",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  loginButtonText: {
-    color: "#101521",
-    fontSize: 13,
-    fontWeight: "800",
-  },
-  searchInput: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-    backgroundColor: "#101621",
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    color: "#ffffff",
-    fontSize: 14,
-  },
-  tabRow: {
-    gap: 8,
-    paddingRight: 8,
-  },
-  tabChip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-    backgroundColor: "#111722",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  tabChipActive: {
-    backgroundColor: "#ffffff",
-  },
-  tabLabel: {
-    color: "#ffffff",
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  tabLabelActive: {
-    color: "#101521",
-  },
-  filterRow: {
-    gap: 8,
-    paddingRight: 8,
-  },
-  filterChip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-    backgroundColor: "rgba(255,255,255,0.04)",
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-  },
-  filterChipActive: {
-    backgroundColor: "rgba(247,107,28,0.16)",
-    borderColor: "#f76b1c",
-  },
-  filterLabel: {
-    color: "rgba(255,255,255,0.76)",
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  heroStack: {
-    gap: 12,
-  },
-  loginCard: {
-    borderRadius: 28,
-    backgroundColor: "#141b28",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-    padding: 22,
-  },
-  partyCard: {
-    borderRadius: 28,
-    backgroundColor: "#17263b",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-    padding: 22,
-  },
-  cardEyebrow: {
-    color: "#ffb978",
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 1.8,
-  },
-  cardTitle: {
-    marginTop: 8,
-    color: "#fff7ed",
-    fontSize: 27,
-    lineHeight: 34,
-    fontWeight: "800",
-  },
-  partyTitle: {
-    marginTop: 8,
-    color: "#fff7ed",
-    fontSize: 28,
-    lineHeight: 36,
-    fontWeight: "800",
-  },
-  cardBody: {
-    marginTop: 10,
-    color: "rgba(255,255,255,0.72)",
-    fontSize: 14,
-    lineHeight: 22,
-  },
-  primaryButton: {
-    marginTop: 16,
-    alignSelf: "flex-start",
-    borderRadius: 999,
-    backgroundColor: "#ffffff",
-    paddingHorizontal: 16,
-    paddingVertical: 11,
-  },
-  primaryButtonText: {
-    color: "#101521",
-    fontSize: 13,
-    fontWeight: "800",
-  },
-  partyMetrics: {
-    marginTop: 16,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-  },
-  metricCard: {
-    minWidth: 90,
-    borderRadius: 18,
-    backgroundColor: "rgba(7,10,17,0.28)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  metricLabel: {
-    color: "rgba(255,255,255,0.48)",
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  metricValue: {
-    marginTop: 6,
-    color: "#ffffff",
-    fontSize: 22,
-    fontWeight: "800",
-  },
-  section: {
-    borderRadius: 28,
-    backgroundColor: "#101621",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-    padding: 22,
-    gap: 12,
-  },
-  sectionEyebrow: {
-    color: "#ffb978",
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 2,
-  },
-  sectionTitle: {
-    color: "#ffffff",
-    fontSize: 28,
-    lineHeight: 34,
-    fontWeight: "800",
-  },
-  sectionBody: {
-    color: "rgba(255,255,255,0.66)",
-    fontSize: 14,
-    lineHeight: 22,
-  },
-  feedCard: {
-    marginTop: 4,
-    borderRadius: 24,
-    backgroundColor: "#0b1019",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-    padding: 16,
-  },
-  poster: {
-    borderRadius: 22,
-    padding: 18,
-  },
-  posterEyebrow: {
-    color: "rgba(255,255,255,0.72)",
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 1.6,
-  },
-  posterTitle: {
-    marginTop: 8,
-    color: "#fff7ed",
-    fontSize: 24,
-    lineHeight: 30,
-    fontWeight: "800",
-  },
-  feedMeta: {
-    marginTop: 14,
-    color: "#79f0d6",
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  chipRow: {
-    marginTop: 12,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  metaChip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  metaChipText: {
-    color: "rgba(255,255,255,0.74)",
-    fontSize: 11,
-    fontWeight: "600",
-  },
-  footerNotice: {
-    borderRadius: 24,
-    backgroundColor: "rgba(255,255,255,0.04)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-    padding: 20,
-  },
-  footerTitle: {
-    color: "#ffffff",
-    fontSize: 18,
-    fontWeight: "800",
-  },
-  footerBody: {
-    marginTop: 8,
-    color: "rgba(255,255,255,0.66)",
-    fontSize: 14,
-    lineHeight: 22,
-  },
+  safeArea: { flex: 1, backgroundColor: "#07111d" },
+  content: { padding: 20, gap: 14, backgroundColor: "#07111d" },
+  eyebrow: { color: "#f6b271", fontSize: 12, letterSpacing: 2.4 },
+  title: { color: "#f8fafc", fontSize: 28, fontWeight: "700", marginBottom: 8 },
+  panel: { backgroundColor: "#0d1726", borderRadius: 24, padding: 16, gap: 12 },
+  panelTitle: { color: "#f8fafc", fontSize: 18, fontWeight: "700" },
+  input: { backgroundColor: "#132031", borderRadius: 14, color: "#f8fafc", paddingHorizontal: 14, paddingVertical: 12 },
+  metrics: { flexDirection: "row", gap: 10 },
+  metricCard: { flex: 1, backgroundColor: "#122338", borderRadius: 18, padding: 12, gap: 6 },
+  metricLabel: { color: "#8da2bb", fontSize: 11, letterSpacing: 1.1 },
+  metricValue: { color: "#f8fafc", fontSize: 20, fontWeight: "700" },
+  row: { flexDirection: "row", gap: 10 },
+  tabRow: { flexDirection: "row", gap: 10 },
+  tab: { flex: 1, borderRadius: 999, borderWidth: 1, borderColor: "#223349", paddingVertical: 12, alignItems: "center" },
+  tabActive: { backgroundColor: "#f4efe4", borderColor: "#f4efe4" },
+  tabText: { color: "#8da2bb", fontSize: 12, fontWeight: "700" },
+  tabTextActive: { color: "#09111b" },
+  message: { color: "#8cf0da", fontSize: 13, lineHeight: 20 },
+  card: { backgroundColor: "#0d1726", borderRadius: 24, padding: 16, gap: 8 },
+  cardEyebrow: { color: "#8cf0da", fontSize: 11, letterSpacing: 1.1 },
+  cardTitle: { color: "#f8fafc", fontSize: 18, fontWeight: "700" },
+  cardBody: { color: "#b8c5d6", fontSize: 14, lineHeight: 21 },
+  cardMeta: { color: "#f6b271", fontSize: 13 },
+  primaryButton: { backgroundColor: "#f4efe4", borderRadius: 999, paddingVertical: 12, paddingHorizontal: 14, alignItems: "center" },
+  primaryButtonText: { color: "#101923", fontSize: 13, fontWeight: "700" },
+  secondaryButton: { backgroundColor: "#143328", borderRadius: 999, paddingVertical: 12, paddingHorizontal: 14, alignItems: "center" },
+  secondaryButtonText: { color: "#8cf0da", fontSize: 13, fontWeight: "700" },
 });

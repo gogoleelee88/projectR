@@ -504,6 +504,36 @@ def bootstrap_database() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_wallet_ledger_user_created_at
                 ON wallet_ledger (user_id, created_at DESC);
+            CREATE TABLE IF NOT EXISTS payment_intents (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                offer_id TEXT NOT NULL REFERENCES economy_offers(id),
+                provider TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                status TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                currency TEXT NOT NULL,
+                client_secret TEXT NOT NULL,
+                receipt_token TEXT,
+                provider_reference TEXT,
+                purchase_id TEXT,
+                subscription_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                settled_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_payment_intents_user_created_at
+                ON payment_intents (user_id, created_at DESC);
+            CREATE TABLE IF NOT EXISTS payment_events (
+                id TEXT PRIMARY KEY,
+                intent_id TEXT NOT NULL REFERENCES payment_intents(id) ON DELETE CASCADE,
+                event_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_payment_events_intent_created_at
+                ON payment_events (intent_id, created_at DESC);
             CREATE TABLE IF NOT EXISTS economy_inventory (
                 id TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1050,6 +1080,72 @@ def _serialize_inventory_item(row: sqlite3.Row) -> dict:
         "metadata": json.loads(row["metadata_json"]),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+    }
+
+
+def _serialize_payment_intent(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "user_id": row["user_id"],
+        "offer_id": row["offer_id"],
+        "provider": row["provider"],
+        "platform": row["platform"],
+        "status": row["status"],
+        "amount": row["amount"],
+        "currency": row["currency"],
+        "client_secret": row["client_secret"],
+        "receipt_token": row["receipt_token"],
+        "provider_reference": row["provider_reference"],
+        "purchase_id": row["purchase_id"],
+        "subscription_id": row["subscription_id"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "settled_at": row["settled_at"],
+    }
+
+
+def _serialize_payment_event(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "intent_id": row["intent_id"],
+        "event_type": row["event_type"],
+        "status": row["status"],
+        "payload": json.loads(row["payload_json"]),
+        "created_at": row["created_at"],
+    }
+
+
+def _record_payment_event(
+    connection: sqlite3.Connection,
+    *,
+    intent_id: str,
+    event_type: str,
+    status: str,
+    payload: dict,
+) -> dict:
+    event_id = str(uuid4())
+    created_at = utc_now()
+    connection.execute(
+        """
+        INSERT INTO payment_events (id, intent_id, event_type, status, payload_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            event_id,
+            intent_id,
+            event_type,
+            status,
+            json.dumps(payload, ensure_ascii=False),
+            created_at,
+        ),
+    )
+    return {
+        "id": event_id,
+        "intent_id": intent_id,
+        "event_type": event_type,
+        "status": status,
+        "payload": payload,
+        "created_at": created_at,
     }
 
 
@@ -2470,6 +2566,19 @@ def list_subscriptions(user_id: str | None = None) -> list[dict]:
         ]
 
 
+def get_economy_offer_by_id(offer_id: str) -> dict | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT *
+            FROM economy_offers
+            WHERE id = ? AND active = 1
+            """,
+            (offer_id,),
+        ).fetchone()
+        return None if row is None else _serialize_economy_offer(row)
+
+
 def list_economy_offers() -> list[dict]:
     with get_connection() as connection:
         rows = connection.execute(
@@ -2635,6 +2744,313 @@ def _grant_offer_unlocks(
             )
         )
     return granted
+
+
+def list_payment_intents(user_id: str, limit: int = 12) -> list[dict]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM payment_intents
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        ).fetchall()
+        payload: list[dict] = []
+        for row in rows:
+            events = connection.execute(
+                """
+                SELECT *
+                FROM payment_events
+                WHERE intent_id = ?
+                ORDER BY created_at DESC
+                """,
+                (row["id"],),
+            ).fetchall()
+            payload.append(
+                {
+                    **_serialize_payment_intent(row),
+                    "events": [_serialize_payment_event(event) for event in events],
+                }
+            )
+        return payload
+
+
+def get_payment_intent(intent_id: str) -> dict | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT *
+            FROM payment_intents
+            WHERE id = ?
+            """,
+            (intent_id,),
+        ).fetchone()
+        if row is None:
+            return None
+
+        events = connection.execute(
+            """
+            SELECT *
+            FROM payment_events
+            WHERE intent_id = ?
+            ORDER BY created_at DESC
+            """,
+            (intent_id,),
+        ).fetchall()
+        return {
+            **_serialize_payment_intent(row),
+            "events": [_serialize_payment_event(event) for event in events],
+        }
+
+
+def create_payment_intent(
+    user_id: str,
+    *,
+    offer_id: str,
+    provider: str = "sandbox",
+    platform: str = "web",
+) -> dict:
+    offer = get_economy_offer_by_id(offer_id)
+    if offer is None:
+        raise ValueError("Offer not found")
+
+    intent_id = str(uuid4())
+    now = utc_now()
+    client_secret = issue_token()
+
+    with get_connection() as connection:
+        user_row = connection.execute(
+            "SELECT id FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        if user_row is None:
+            raise ValueError("User not found")
+
+        connection.execute(
+            """
+            INSERT INTO payment_intents (
+                id, user_id, offer_id, provider, platform, status, amount, currency,
+                client_secret, receipt_token, provider_reference, purchase_id,
+                subscription_id, created_at, updated_at, settled_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                intent_id,
+                user_id,
+                offer_id,
+                provider,
+                platform,
+                "requires_confirmation",
+                offer["price"],
+                offer["currency"],
+                client_secret,
+                None,
+                None,
+                None,
+                None,
+                now,
+                now,
+                None,
+            ),
+        )
+        created_event = _record_payment_event(
+            connection,
+            intent_id=intent_id,
+            event_type="intent.created",
+            status="requires_confirmation",
+            payload={
+                "offerId": offer_id,
+                "provider": provider,
+                "platform": platform,
+                "amount": offer["price"],
+                "currency": offer["currency"],
+            },
+        )
+        connection.commit()
+
+    return {
+        "intent": {
+            "id": intent_id,
+            "user_id": user_id,
+            "offer_id": offer_id,
+            "provider": provider,
+            "platform": platform,
+            "status": "requires_confirmation",
+            "amount": offer["price"],
+            "currency": offer["currency"],
+            "client_secret": client_secret,
+            "receipt_token": None,
+            "provider_reference": None,
+            "purchase_id": None,
+            "subscription_id": None,
+            "created_at": now,
+            "updated_at": now,
+            "settled_at": None,
+        },
+        "offer": offer,
+        "events": [created_event],
+    }
+
+
+def settle_payment_intent(
+    intent_id: str,
+    *,
+    receipt_token: str | None = None,
+    provider_reference: str | None = None,
+    status: str = "paid",
+    verification_payload: dict | None = None,
+) -> dict:
+    with get_connection() as connection:
+        intent_row = connection.execute(
+            """
+            SELECT *
+            FROM payment_intents
+            WHERE id = ?
+            """,
+            (intent_id,),
+        ).fetchone()
+        if intent_row is None:
+            raise ValueError("Payment intent not found")
+
+        intent = _serialize_payment_intent(intent_row)
+        if intent["status"] == "settled":
+            existing_events = connection.execute(
+                """
+                SELECT *
+                FROM payment_events
+                WHERE intent_id = ?
+                ORDER BY created_at DESC
+                """,
+                (intent_id,),
+            ).fetchall()
+            return {
+                "intent": intent,
+                "offer": get_economy_offer_by_id(intent["offer_id"]),
+                "events": [_serialize_payment_event(event) for event in existing_events],
+                "settlement": None,
+            }
+
+        processing_at = utc_now()
+        connection.execute(
+            """
+            UPDATE payment_intents
+            SET status = ?, receipt_token = COALESCE(?, receipt_token),
+                provider_reference = COALESCE(?, provider_reference), updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                "processing" if status == "paid" else status,
+                receipt_token,
+                provider_reference,
+                processing_at,
+                intent_id,
+            ),
+        )
+        _record_payment_event(
+            connection,
+            intent_id=intent_id,
+            event_type="intent.confirmed",
+            status="processing" if status == "paid" else status,
+            payload={
+                "receiptToken": receipt_token,
+                "providerReference": provider_reference,
+                "verification": verification_payload or {},
+            },
+        )
+        connection.commit()
+
+    if status != "paid":
+        with get_connection() as connection:
+            failed_at = utc_now()
+            connection.execute(
+                """
+                UPDATE payment_intents
+                SET status = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (status, failed_at, intent_id),
+            )
+            _record_payment_event(
+                connection,
+                intent_id=intent_id,
+                event_type="intent.failed",
+                status=status,
+                payload={"reason": "Provider verification failed"},
+            )
+            connection.commit()
+            updated_row = connection.execute(
+                "SELECT * FROM payment_intents WHERE id = ?",
+                (intent_id,),
+            ).fetchone()
+            events = connection.execute(
+                "SELECT * FROM payment_events WHERE intent_id = ? ORDER BY created_at DESC",
+                (intent_id,),
+            ).fetchall()
+        return {
+            "intent": _serialize_payment_intent(updated_row),
+            "offer": get_economy_offer_by_id(updated_row["offer_id"]),
+            "events": [_serialize_payment_event(event) for event in events],
+            "settlement": None,
+        }
+
+    settlement = checkout_economy_offer(intent["user_id"], offer_id=intent["offer_id"], status="paid")
+
+    with get_connection() as connection:
+        settled_at = utc_now()
+        connection.execute(
+            """
+            UPDATE payment_intents
+            SET status = ?, receipt_token = COALESCE(?, receipt_token),
+                provider_reference = COALESCE(?, provider_reference),
+                purchase_id = ?, subscription_id = ?, updated_at = ?, settled_at = ?
+            WHERE id = ?
+            """,
+            (
+                "settled",
+                receipt_token,
+                provider_reference,
+                settlement["purchase_id"],
+                settlement["subscription_id"],
+                settled_at,
+                settled_at,
+                intent_id,
+            ),
+        )
+        _record_payment_event(
+            connection,
+            intent_id=intent_id,
+            event_type="payment.settled",
+            status="settled",
+            payload={
+                "purchaseId": settlement["purchase_id"],
+                "subscriptionId": settlement["subscription_id"],
+                "walletBalance": settlement["wallet_balance"],
+            },
+        )
+        connection.commit()
+        updated_row = connection.execute(
+            "SELECT * FROM payment_intents WHERE id = ?",
+            (intent_id,),
+        ).fetchone()
+        events = connection.execute(
+            """
+            SELECT *
+            FROM payment_events
+            WHERE intent_id = ?
+            ORDER BY created_at DESC
+            """,
+            (intent_id,),
+        ).fetchall()
+
+    return {
+        "intent": _serialize_payment_intent(updated_row),
+        "offer": get_economy_offer_by_id(updated_row["offer_id"]),
+        "events": [_serialize_payment_event(event) for event in events],
+        "settlement": settlement,
+    }
 
 
 def create_checkout(

@@ -16,15 +16,18 @@ from .db import (
     continue_character_chat,
     create_auth_session,
     create_checkout,
+    create_payment_intent,
     create_preset_session,
     create_release,
     create_user,
     get_economy_catalog,
+    get_economy_offer_by_id,
     get_economy_state,
     fetch_bootstrap_payload,
     generate_image_shot,
     get_character_chat_state,
     get_feed_item,
+    get_payment_intent,
     get_story_progress_state,
     get_user_profile,
     get_user_by_token,
@@ -36,6 +39,7 @@ from .db import (
     list_image_styles,
     list_ops_signals,
     list_party_scenarios,
+    list_payment_intents,
     list_plans,
     list_releases,
     list_saved_items,
@@ -46,11 +50,17 @@ from .db import (
     revoke_auth_session,
     resolve_party_action,
     save_item,
+    settle_payment_intent,
     sync_story_progress,
     update_user_profile,
 )
 from .party import party_sessions
-from .runtime import request_live_chat, request_live_checkout, request_live_image
+from .runtime import (
+    request_live_chat,
+    request_live_checkout,
+    request_live_image,
+    request_live_receipt_verification,
+)
 from .schemas import (
     AuthSessionResponse,
     BillingPlanResponse,
@@ -78,6 +88,11 @@ from .schemas import (
     PartySessionResponse,
     PartyResolveRequest,
     PartyResolveResponse,
+    PaymentEventResponse,
+    PaymentIntentConfirmRequest,
+    PaymentIntentCreateRequest,
+    PaymentIntentEnvelopeResponse,
+    PaymentIntentResponse,
     RegisterRequest,
     ReleaseCreateRequest,
     ReleaseResponse,
@@ -330,6 +345,105 @@ def _serialize_economy_state(payload: dict) -> EconomyStateResponse:
                 by_alias=True,
             ),
             "syncedAt": payload["synced_at"],
+        }
+    )
+
+
+def _serialize_economy_checkout(
+    payload: dict,
+    *,
+    status: str | None = None,
+    checkout_url: str | None = None,
+    provider: str | None = None,
+) -> EconomyCheckoutResponse:
+    return EconomyCheckoutResponse.model_validate(
+        {
+            "purchaseId": payload["purchase_id"],
+            "subscriptionId": payload["subscription_id"],
+            "offer": _serialize_economy_offer(payload["offer"]).model_dump(
+                mode="json",
+                by_alias=True,
+            ),
+            "status": status or payload["status"],
+            "walletBalance": payload["wallet_balance"],
+            "latestEntry": None
+            if payload["latest_entry"] is None
+            else _serialize_wallet_entry(payload["latest_entry"]).model_dump(
+                mode="json",
+                by_alias=True,
+            ),
+            "grantedUnlocks": [
+                _serialize_inventory_item(item).model_dump(mode="json", by_alias=True)
+                for item in payload["granted_unlocks"]
+            ],
+            "activeSubscription": None
+            if payload["active_subscription"] is None
+            else _serialize_subscription(payload["active_subscription"]).model_dump(
+                mode="json",
+                by_alias=True,
+            ),
+            "checkoutUrl": checkout_url,
+            "provider": provider,
+            "syncedAt": payload["synced_at"],
+        }
+    )
+
+
+def _serialize_payment_event(event: dict) -> PaymentEventResponse:
+    return PaymentEventResponse.model_validate(
+        {
+            "id": event["id"],
+            "intentId": event["intent_id"],
+            "eventType": event["event_type"],
+            "status": event["status"],
+            "payload": event["payload"],
+            "createdAt": event["created_at"],
+        }
+    )
+
+
+def _serialize_payment_intent(intent: dict) -> PaymentIntentResponse:
+    return PaymentIntentResponse.model_validate(
+        {
+            "id": intent["id"],
+            "userId": intent["user_id"],
+            "offerId": intent["offer_id"],
+            "provider": intent["provider"],
+            "platform": intent["platform"],
+            "status": intent["status"],
+            "amount": intent["amount"],
+            "currency": intent["currency"],
+            "clientSecret": intent["client_secret"],
+            "receiptToken": intent["receipt_token"],
+            "providerReference": intent["provider_reference"],
+            "purchaseId": intent["purchase_id"],
+            "subscriptionId": intent["subscription_id"],
+            "createdAt": intent["created_at"],
+            "updatedAt": intent["updated_at"],
+            "settledAt": intent["settled_at"],
+        }
+    )
+
+
+def _serialize_payment_envelope(payload: dict) -> PaymentIntentEnvelopeResponse:
+    settlement = payload.get("settlement")
+    return PaymentIntentEnvelopeResponse.model_validate(
+        {
+            "intent": _serialize_payment_intent(payload["intent"]).model_dump(
+                mode="json",
+                by_alias=True,
+            ),
+            "offer": _serialize_economy_offer(payload["offer"]).model_dump(
+                mode="json",
+                by_alias=True,
+            ),
+            "events": [
+                _serialize_payment_event(event).model_dump(mode="json", by_alias=True)
+                for event in payload["events"]
+            ],
+            "settlement": None
+            if settlement is None
+            else _serialize_economy_checkout(settlement).model_dump(mode="json", by_alias=True),
         }
     )
 
@@ -1182,33 +1296,11 @@ def economy_offer_checkout(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    return EconomyCheckoutResponse.model_validate(
-        {
-            "purchaseId": result["purchase_id"],
-            "subscriptionId": result["subscription_id"],
-            "offer": _serialize_economy_offer(result["offer"]).model_dump(mode="json", by_alias=True),
-            "status": live_checkout["status"] if live_checkout is not None else result["status"],
-            "walletBalance": result["wallet_balance"],
-            "latestEntry": None
-            if result["latest_entry"] is None
-            else _serialize_wallet_entry(result["latest_entry"]).model_dump(
-                mode="json",
-                by_alias=True,
-            ),
-            "grantedUnlocks": [
-                _serialize_inventory_item(item).model_dump(mode="json", by_alias=True)
-                for item in result["granted_unlocks"]
-            ],
-            "activeSubscription": None
-            if result["active_subscription"] is None
-            else _serialize_subscription(result["active_subscription"]).model_dump(
-                mode="json",
-                by_alias=True,
-            ),
-            "checkoutUrl": None if live_checkout is None else live_checkout["checkout_url"],
-            "provider": None if live_checkout is None else live_checkout["provider"],
-            "syncedAt": result["synced_at"],
-        }
+    return _serialize_economy_checkout(
+        result,
+        status=live_checkout["status"] if live_checkout is not None else result["status"],
+        checkout_url=None if live_checkout is None else live_checkout["checkout_url"],
+        provider=None if live_checkout is None else live_checkout["provider"],
     )
 
 
@@ -1243,6 +1335,105 @@ def economy_redeem(
             "syncedAt": result["synced_at"],
         }
     )
+
+
+@app.get("/payments/intents", response_model=list[PaymentIntentEnvelopeResponse])
+def payment_intents(
+    authorization: str | None = Header(default=None),
+) -> list[PaymentIntentEnvelopeResponse]:
+    user = _require_session_user(authorization)
+    payload: list[PaymentIntentEnvelopeResponse] = []
+    for entry in list_payment_intents(user["id"]):
+        offer = get_economy_offer_by_id(entry["offer_id"])
+        if offer is None:
+            continue
+        payload.append(
+            _serialize_payment_envelope(
+                {
+                    "intent": {key: value for key, value in entry.items() if key != "events"},
+                    "offer": offer,
+                    "events": entry["events"],
+                    "settlement": None,
+                }
+            )
+        )
+    return payload
+
+
+@app.post("/payments/intents", response_model=PaymentIntentEnvelopeResponse)
+def create_payment_intent_route(
+    payload: PaymentIntentCreateRequest,
+    authorization: str | None = Header(default=None),
+) -> PaymentIntentEnvelopeResponse:
+    user = _require_session_user(authorization)
+    try:
+        result = create_payment_intent(
+            user["id"],
+            offer_id=payload.offer_id,
+            provider=payload.provider,
+            platform=payload.platform,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if message in {"Offer not found", "User not found"} else 400
+        raise HTTPException(status_code=status_code, detail=message) from exc
+
+    return _serialize_payment_envelope(result)
+
+
+@app.post("/payments/intents/{intent_id}/confirm", response_model=PaymentIntentEnvelopeResponse)
+def confirm_payment_intent_route(
+    intent_id: str,
+    payload: PaymentIntentConfirmRequest,
+    authorization: str | None = Header(default=None),
+) -> PaymentIntentEnvelopeResponse:
+    user = _require_session_user(authorization)
+    existing_intent = get_payment_intent(intent_id)
+    if existing_intent is None:
+        raise HTTPException(status_code=404, detail="Payment intent not found")
+    if existing_intent["user_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Payment intent does not belong to this user")
+
+    verification_payload = payload.verification_payload or {}
+    provider_reference = payload.provider_reference
+    verification = request_live_receipt_verification(
+        intent_id=intent_id,
+        user_id=user["id"],
+        offer_id=existing_intent["offer_id"],
+        provider=existing_intent["provider"],
+        platform=existing_intent["platform"],
+        amount=existing_intent["amount"],
+        currency=existing_intent["currency"],
+        receipt_token=payload.receipt_token,
+        client_secret=existing_intent["client_secret"],
+    )
+    settlement_status = "paid"
+    if verification is not None:
+        settlement_status = str(verification.get("status", "paid"))
+        provider_reference = verification.get("provider_reference") or provider_reference
+        verification_payload = verification.get("verification", verification_payload)
+    elif existing_intent["provider"] not in {
+        "sandbox",
+        "web-sandbox",
+        "play-billing-sandbox",
+        "app-store-sandbox",
+    }:
+        settlement_status = "pending"
+
+    try:
+        result = settle_payment_intent(
+            intent_id,
+            receipt_token=payload.receipt_token,
+            provider_reference=provider_reference,
+            status=settlement_status,
+            verification_payload=verification_payload,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if message == "Payment intent not found" else 409
+        raise HTTPException(status_code=status_code, detail=message) from exc
+
+    return _serialize_payment_envelope(result)
 
 
 @app.get("/ops/signals")

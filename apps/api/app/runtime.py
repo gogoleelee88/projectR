@@ -118,3 +118,44 @@ def request_live_checkout(
         "checkout_url": payload.get("checkoutUrl"),
         "status": payload.get("status", "paid"),
     }
+
+
+def request_live_receipt_verification(
+    *,
+    intent_id: str,
+    user_id: str,
+    offer_id: str,
+    provider: str,
+    platform: str,
+    amount: int,
+    currency: str,
+    receipt_token: str | None,
+    client_secret: str,
+) -> dict | None:
+    url = os.getenv("PROJECTR_PAYMENT_VERIFY_WEBHOOK_URL")
+    if not url:
+        return None
+
+    payload = _post_json(
+        url,
+        {
+            "intentId": intent_id,
+            "userId": user_id,
+            "offerId": offer_id,
+            "provider": provider,
+            "platform": platform,
+            "amount": amount,
+            "currency": currency,
+            "receiptToken": receipt_token,
+            "clientSecret": client_secret,
+        },
+    )
+    if payload is None:
+        return None
+
+    return {
+        "status": payload.get("status", "paid"),
+        "provider": payload.get("provider", provider),
+        "provider_reference": payload.get("providerReference"),
+        "verification": payload.get("verification", payload),
+    }
