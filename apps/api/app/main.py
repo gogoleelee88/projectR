@@ -12,12 +12,15 @@ from .db import (
     authenticate_user,
     bootstrap_database,
     build_chat_reply,
+    checkout_economy_offer,
     continue_character_chat,
     create_auth_session,
     create_checkout,
     create_preset_session,
     create_release,
     create_user,
+    get_economy_catalog,
+    get_economy_state,
     fetch_bootstrap_payload,
     generate_image_shot,
     get_character_chat_state,
@@ -27,6 +30,8 @@ from .db import (
     get_user_by_token,
     list_characters,
     list_creator_templates,
+    list_economy_offers,
+    list_economy_redemptions,
     list_feed,
     list_image_styles,
     list_ops_signals,
@@ -37,6 +42,7 @@ from .db import (
     list_story_episodes,
     list_subscriptions,
     remove_saved_item,
+    redeem_economy_item,
     revoke_auth_session,
     resolve_party_action,
     save_item,
@@ -55,6 +61,13 @@ from .schemas import (
     ChatResponse,
     CheckoutRequest,
     CheckoutResponse,
+    EconomyCatalogResponse,
+    EconomyCheckoutResponse,
+    EconomyInventoryItemResponse,
+    EconomyOfferResponse,
+    EconomyRedeemResponse,
+    EconomyRedemptionResponse,
+    EconomyStateResponse,
     HealthResponse,
     ImageGenerateRequest,
     ImageGenerateResponse,
@@ -79,6 +92,7 @@ from .schemas import (
     SubscriptionResponse,
     UserProfileResponse,
     UserProfileUpdateRequest,
+    WalletLedgerEntryResponse,
 )
 
 
@@ -174,6 +188,147 @@ def _serialize_character_chat_state(payload: dict) -> CharacterChatStateResponse
                 "affinityThreshold": payload["latest_reward_grant"]["affinity_threshold"],
                 "grantedAt": payload["latest_reward_grant"]["granted_at"],
             },
+            "syncedAt": payload["synced_at"],
+        }
+    )
+
+
+def _serialize_subscription(subscription: dict | None) -> SubscriptionResponse | None:
+    if subscription is None:
+        return None
+
+    return SubscriptionResponse.model_validate(
+        {
+            "id": subscription["id"],
+            "userId": subscription["user_id"],
+            "planId": subscription["plan_id"],
+            "planName": subscription["plan_name"],
+            "price": subscription["price"],
+            "status": subscription["status"],
+            "renewalAt": subscription["renewal_at"],
+            "createdAt": subscription["created_at"],
+        }
+    )
+
+
+def _serialize_wallet_entry(entry: dict | None) -> WalletLedgerEntryResponse | None:
+    if entry is None:
+        return None
+
+    return WalletLedgerEntryResponse.model_validate(
+        {
+            "id": entry["id"],
+            "currency": entry["currency"],
+            "amountDelta": entry["amount_delta"],
+            "balanceAfter": entry["balance_after"],
+            "sourceKind": entry["source_kind"],
+            "sourceId": entry["source_id"],
+            "title": entry["title"],
+            "summary": entry["summary"],
+            "createdAt": entry["created_at"],
+        }
+    )
+
+
+def _serialize_inventory_item(item: dict) -> EconomyInventoryItemResponse:
+    return EconomyInventoryItemResponse.model_validate(
+        {
+            "id": item["id"],
+            "itemId": item["item_id"],
+            "sourceKind": item["source_kind"],
+            "sourceId": item["source_id"],
+            "category": item["category"],
+            "title": item["title"],
+            "summary": item["summary"],
+            "quantity": item["quantity"],
+            "metadata": item["metadata"],
+            "createdAt": item["created_at"],
+            "updatedAt": item["updated_at"],
+        }
+    )
+
+
+def _serialize_economy_offer(offer: dict) -> EconomyOfferResponse:
+    return EconomyOfferResponse.model_validate(
+        {
+            "id": offer["id"],
+            "offerType": offer["offer_type"],
+            "category": offer["category"],
+            "name": offer["name"],
+            "headline": offer["headline"],
+            "summary": offer["summary"],
+            "price": offer["price"],
+            "currency": offer["currency"],
+            "badge": offer["badge"],
+            "recurring": offer["recurring"],
+            "grantSparks": offer["grant_sparks"],
+            "bonusSparks": offer["bonus_sparks"],
+            "highlight": offer["highlight"],
+            "tags": offer["tags"],
+            "planId": offer["plan_id"],
+            "includedUnlocks": [
+                {
+                    "itemId": unlock["item_id"],
+                    "category": unlock["category"],
+                    "title": unlock["title"],
+                    "summary": unlock["summary"],
+                    "quantity": unlock["quantity"],
+                }
+                for unlock in offer["included_unlocks"]
+            ],
+        }
+    )
+
+
+def _serialize_economy_redemption(redemption: dict) -> EconomyRedemptionResponse:
+    return EconomyRedemptionResponse.model_validate(
+        {
+            "id": redemption["id"],
+            "category": redemption["category"],
+            "title": redemption["title"],
+            "summary": redemption["summary"],
+            "sparksCost": redemption["sparks_cost"],
+            "badge": redemption["badge"],
+            "repeatable": redemption["repeatable"],
+            "tags": redemption["tags"],
+            "grant": {
+                "itemId": redemption["grant"]["item_id"],
+                "category": redemption["grant"]["category"],
+                "title": redemption["grant"]["title"],
+                "summary": redemption["grant"]["summary"],
+                "quantity": redemption["grant"]["quantity"],
+            },
+        }
+    )
+
+
+def _serialize_economy_state(payload: dict) -> EconomyStateResponse:
+    return EconomyStateResponse.model_validate(
+        {
+            "walletBalance": payload["wallet_balance"],
+            "membership": payload["membership"],
+            "offers": [
+                _serialize_economy_offer(offer).model_dump(mode="json", by_alias=True)
+                for offer in payload["offers"]
+            ],
+            "redemptions": [
+                _serialize_economy_redemption(redemption).model_dump(mode="json", by_alias=True)
+                for redemption in payload["redemptions"]
+            ],
+            "inventory": [
+                _serialize_inventory_item(item).model_dump(mode="json", by_alias=True)
+                for item in payload["inventory"]
+            ],
+            "ledger": [
+                _serialize_wallet_entry(entry).model_dump(mode="json", by_alias=True)
+                for entry in payload["ledger"]
+            ],
+            "activeSubscription": None
+            if payload["active_subscription"] is None
+            else _serialize_subscription(payload["active_subscription"]).model_dump(
+                mode="json",
+                by_alias=True,
+            ),
             "syncedAt": payload["synced_at"],
         }
     )
@@ -970,6 +1125,122 @@ def billing_checkout(payload: CheckoutRequest) -> CheckoutResponse:
             "renewalAt": result["renewal_at"],
             "checkoutUrl": None if live_checkout is None else live_checkout["checkout_url"],
             "provider": None if live_checkout is None else live_checkout["provider"],
+        }
+    )
+
+
+@app.get("/economy/catalog", response_model=EconomyCatalogResponse)
+def economy_catalog() -> EconomyCatalogResponse:
+    payload = get_economy_catalog()
+    return EconomyCatalogResponse.model_validate(
+        {
+            "offers": [
+                _serialize_economy_offer(offer).model_dump(mode="json", by_alias=True)
+                for offer in payload["offers"]
+            ],
+            "redemptions": [
+                _serialize_economy_redemption(redemption).model_dump(mode="json", by_alias=True)
+                for redemption in payload["redemptions"]
+            ],
+        }
+    )
+
+
+@app.get("/economy/state", response_model=EconomyStateResponse)
+def economy_state(
+    authorization: str | None = Header(default=None),
+) -> EconomyStateResponse:
+    user = _require_session_user(authorization)
+    payload = get_economy_state(user["id"])
+    return _serialize_economy_state(payload)
+
+
+@app.post("/economy/offers/{offer_id}/checkout", response_model=EconomyCheckoutResponse)
+def economy_offer_checkout(
+    offer_id: str,
+    authorization: str | None = Header(default=None),
+) -> EconomyCheckoutResponse:
+    user = _require_session_user(authorization)
+    offer = next((entry for entry in get_economy_catalog()["offers"] if entry["id"] == offer_id), None)
+    if offer is None:
+        raise HTTPException(status_code=404, detail="Offer not found")
+
+    live_checkout = request_live_checkout(
+        user_id=user["id"],
+        plan_id=offer_id,
+        sku=offer_id,
+        category=offer["category"],
+        amount=offer["price"],
+        currency=offer["currency"],
+    )
+    try:
+        result = checkout_economy_offer(
+            user["id"],
+            offer_id=offer_id,
+            status="paid" if live_checkout is None else live_checkout["status"],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return EconomyCheckoutResponse.model_validate(
+        {
+            "purchaseId": result["purchase_id"],
+            "subscriptionId": result["subscription_id"],
+            "offer": _serialize_economy_offer(result["offer"]).model_dump(mode="json", by_alias=True),
+            "status": live_checkout["status"] if live_checkout is not None else result["status"],
+            "walletBalance": result["wallet_balance"],
+            "latestEntry": None
+            if result["latest_entry"] is None
+            else _serialize_wallet_entry(result["latest_entry"]).model_dump(
+                mode="json",
+                by_alias=True,
+            ),
+            "grantedUnlocks": [
+                _serialize_inventory_item(item).model_dump(mode="json", by_alias=True)
+                for item in result["granted_unlocks"]
+            ],
+            "activeSubscription": None
+            if result["active_subscription"] is None
+            else _serialize_subscription(result["active_subscription"]).model_dump(
+                mode="json",
+                by_alias=True,
+            ),
+            "checkoutUrl": None if live_checkout is None else live_checkout["checkout_url"],
+            "provider": None if live_checkout is None else live_checkout["provider"],
+            "syncedAt": result["synced_at"],
+        }
+    )
+
+
+@app.post("/economy/redemptions/{redemption_id}/redeem", response_model=EconomyRedeemResponse)
+def economy_redeem(
+    redemption_id: str,
+    authorization: str | None = Header(default=None),
+) -> EconomyRedeemResponse:
+    user = _require_session_user(authorization)
+    try:
+        result = redeem_economy_item(user["id"], redemption_id=redemption_id)
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 409 if message in {"Insufficient sparks", "Reward already redeemed"} else 404
+        raise HTTPException(status_code=status_code, detail=message) from exc
+
+    return EconomyRedeemResponse.model_validate(
+        {
+            "redemption": _serialize_economy_redemption(result["redemption"]).model_dump(
+                mode="json",
+                by_alias=True,
+            ),
+            "walletBalance": result["wallet_balance"],
+            "latestEntry": _serialize_wallet_entry(result["latest_entry"]).model_dump(
+                mode="json",
+                by_alias=True,
+            ),
+            "grantedItem": _serialize_inventory_item(result["granted_item"]).model_dump(
+                mode="json",
+                by_alias=True,
+            ),
+            "syncedAt": result["synced_at"],
         }
     )
 

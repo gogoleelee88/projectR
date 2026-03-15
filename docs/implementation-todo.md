@@ -44,3 +44,4 @@ This file is the working order of execution. Items are implemented in sequence a
 - Refined: story runtime now stores completed runs, replay suggestions, and season report stats
 - Refined: logged-in players now sync story progress to the API and unlock ending rewards with spark payouts
 - Refined: dedicated character chat player now supports account sync, bond progression, and unlock rewards
+- In progress: payment-reward economy now includes a dedicated store shell, wallet ledger, premium inventory, offer checkout, and spark redemption flows

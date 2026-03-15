@@ -10,7 +10,11 @@ import type {
   StoryEpisodeChoice,
   StoryEpisodeNode,
 } from "@/data/story-campaigns";
-import { AUTH_TOKEN_KEY, requestAuthorizedApi } from "@/lib/projectr-api";
+import {
+  AUTH_TOKEN_KEY,
+  requestAuthorizedApi,
+  type EconomyStatePayload,
+} from "@/lib/projectr-api";
 
 type StoryPlayerShellProps = { work: FeaturedWork; campaign: StoryCampaign };
 type StoryLogEntry = {
@@ -91,6 +95,18 @@ const clampScore = (value: number) => Math.max(0, Math.min(100, value));
 const storageKey = (workId: string) => `${STORAGE_PREFIX}.${workId}`;
 const historyStorageKey = (workId: string) => `${HISTORY_STORAGE_PREFIX}.${workId}`;
 const uniqueItems = (values: string[]) => Array.from(new Set(values));
+
+function hasStoryPremiumAccess(
+  workId: string,
+  inventory: EconomyStatePayload["inventory"],
+) {
+  return inventory.some(
+    (item) =>
+      item.itemId === `${workId}-route-key` ||
+      item.itemId === `${workId}-vault-pass` ||
+      item.itemId === "season-01-fast-lane",
+  );
+}
 
 function createInitialProgress(campaign: StoryCampaign): StoryProgress {
   const firstEpisodeId = campaign.episodes[0]?.id ?? "";
@@ -289,6 +305,7 @@ export function StoryPlayerShell({ work, campaign }: StoryPlayerShellProps) {
   const [endingRewards, setEndingRewards] = useState<StoryEndingReward[]>([]);
   const [rewardGrant, setRewardGrant] = useState<StoryRewardGrant | null>(null);
   const [sparkBalance, setSparkBalance] = useState<number | null>(null);
+  const [premiumVaultUnlocked, setPremiumVaultUnlocked] = useState(false);
 
   useEffect(() => {
     const initial = createInitialProgress(campaign);
@@ -331,6 +348,7 @@ export function StoryPlayerShell({ work, campaign }: StoryPlayerShellProps) {
     if (!token) {
       setEndingRewards([]);
       setSparkBalance(null);
+      setPremiumVaultUnlocked(false);
       setSyncState("guest");
       setSyncReady(true);
       return () => {
@@ -341,11 +359,18 @@ export function StoryPlayerShell({ work, campaign }: StoryPlayerShellProps) {
     setSyncReady(false);
     setSyncState("syncing");
 
-    void requestAuthorizedApi<StorySyncResponse>(
-      `/story/progress?workId=${encodeURIComponent(work.id)}`,
-      token,
-    ).then((payload) => {
+    void Promise.all([
+      requestAuthorizedApi<StorySyncResponse>(
+        `/story/progress?workId=${encodeURIComponent(work.id)}`,
+        token,
+      ),
+      requestAuthorizedApi<EconomyStatePayload>("/economy/state", token),
+    ]).then(([payload, economyState]) => {
       if (!active) return;
+
+      setPremiumVaultUnlocked(
+        economyState ? hasStoryPremiumAccess(work.id, economyState.inventory) : false,
+      );
 
       if (!payload) {
         setSyncState("offline");
@@ -549,6 +574,25 @@ export function StoryPlayerShell({ work, campaign }: StoryPlayerShellProps) {
                 <Link href={`/detail/work/${work.id}`} className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-[#121722]">작품 상세</Link>
                 <a href="/?tab=story" className="rounded-full border border-white/10 px-4 py-2 text-sm text-white/74">스토리 홈</a>
                 <button type="button" onClick={() => { setRewardGrant(null); persistProgress(createInitialProgress(campaign)); }} className="rounded-full border border-white/10 px-4 py-2 text-sm text-white/74">세션 리셋</button>
+              </div>
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[1.4rem] border border-white/10 bg-white/[0.03] px-4 py-3">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.18em] text-white/44">Premium Vault</div>
+                  <div className="mt-2 text-sm text-white/72">
+                    {premiumVaultUnlocked
+                      ? "Route Key or Vault Pass is active. Premium campaign notes are now live for this run."
+                      : "The premium route layer is still gated. Unlock Route Key or Vault Pass in Store to open it."}
+                  </div>
+                </div>
+                {premiumVaultUnlocked ? (
+                  <div className="rounded-full border border-[#79f0d6]/28 bg-[#0c171b] px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#79f0d6]">
+                    Vault Live
+                  </div>
+                ) : (
+                  <Link href="/store" className="rounded-full border border-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-white/70">
+                    Unlock in Store
+                  </Link>
+                )}
               </div>
               <div className="mt-6 grid gap-3 sm:grid-cols-3">
                 {[

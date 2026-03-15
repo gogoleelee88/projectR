@@ -347,6 +347,12 @@ export function CrackHomeShell({ initialData }: Props) {
             <div>
               <div className="text-xs font-semibold uppercase tracking-[0.34em] text-[#ffb978]">Project R</div>
               <div className="mt-1 text-lg font-semibold text-white">Crack Clone Baseline</div>
+              <Link
+                href="/store"
+                className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-white/76"
+              >
+                Store
+              </Link>
             </div>
             <div className="flex items-center gap-3">
               {session ? (

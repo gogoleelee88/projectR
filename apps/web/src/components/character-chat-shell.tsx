@@ -7,6 +7,7 @@ import {
   AUTH_TOKEN_KEY,
   fetchCurrentSession,
   requestAuthorizedApi,
+  type EconomyStatePayload,
 } from "@/lib/projectr-api";
 
 type CharacterChatShellProps = {
@@ -142,6 +143,17 @@ const rewardCatalog: Record<string, RewardCatalogEntry[]> = {
 
 function storageKey(characterId: string) {
   return `${STORAGE_PREFIX}.${characterId}`;
+}
+
+function hasPremiumRouteAccess(
+  characterId: string,
+  inventory: EconomyStatePayload["inventory"],
+) {
+  return inventory.some(
+    (item) =>
+      item.itemId === `${characterId}-priority-channel` ||
+      item.itemId === "character-priority-queue",
+  );
 }
 
 function catalogForCharacter(characterId: string): RewardCatalogEntry[] {
@@ -401,6 +413,7 @@ export function CharacterChatShell({
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
   const [messageNotice, setMessageNotice] = useState("");
+  const [premiumRouteUnlocked, setPremiumRouteUnlocked] = useState(false);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(storageKey(character.id));
@@ -419,6 +432,7 @@ export function CharacterChatShell({
     if (!token) {
       setAuthToken(null);
       setSyncMode("guest");
+      setPremiumRouteUnlocked(false);
       return;
     }
 
@@ -433,16 +447,24 @@ export function CharacterChatShell({
         window.localStorage.removeItem(AUTH_TOKEN_KEY);
         setAuthToken(null);
         setSyncMode("guest");
+        setPremiumRouteUnlocked(false);
         return;
       }
 
       setAuthToken(token);
-      const payload = await requestAuthorizedApi<CharacterChatState>(
-        `/chat/state?characterId=${encodeURIComponent(character.id)}`,
-        token,
-      );
+      const [payload, economyState] = await Promise.all([
+        requestAuthorizedApi<CharacterChatState>(
+          `/chat/state?characterId=${encodeURIComponent(character.id)}`,
+          token,
+        ),
+        requestAuthorizedApi<EconomyStatePayload>("/economy/state", token),
+      ]);
 
       if (!active) return;
+
+      setPremiumRouteUnlocked(
+        economyState ? hasPremiumRouteAccess(character.id, economyState.inventory) : false,
+      );
 
       if (!payload) {
         setSyncMode("offline");
@@ -469,8 +491,14 @@ export function CharacterChatShell({
       `${character.name}, what did you hide from everyone else?`,
       `Tell me the next move you trust only me with.`,
       `What would make tonight unforgettable for us?`,
+      ...(premiumRouteUnlocked
+        ? [
+            `Open the premium route and tell me what you never wrote down.`,
+            `Use the priority channel. What is the confession you only release off-record?`,
+          ]
+        : []),
     ],
-    [character.name],
+    [character.name, premiumRouteUnlocked],
   );
 
   const sendMessage = async () => {
@@ -662,6 +690,31 @@ export function CharacterChatShell({
                 <div className="text-sm text-white/54">
                   Last sync {formatTime(chatState.syncedAt)}
                 </div>
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[1.4rem] border border-white/10 bg-white/[0.03] px-4 py-3">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.18em] text-white/44">
+                    Premium Route
+                  </div>
+                  <div className="mt-2 text-sm text-white/72">
+                    {premiumRouteUnlocked
+                      ? "Priority channel is live. Premium prompts are now open in this player."
+                      : "The premium lane is still gated. Unlock it in Store to open the higher-intensity route."}
+                  </div>
+                </div>
+                {premiumRouteUnlocked ? (
+                  <div className="rounded-full border border-[#79f0d6]/28 bg-[#0c171b] px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#79f0d6]">
+                    Unlocked
+                  </div>
+                ) : (
+                  <Link
+                    href="/store"
+                    className="rounded-full border border-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-white/70"
+                  >
+                    Unlock in Store
+                  </Link>
+                )}
               </div>
 
               <div className="mt-5 space-y-4">
