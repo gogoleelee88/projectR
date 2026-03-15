@@ -178,6 +178,41 @@ export type EconomyRedeemPayload = {
   syncedAt: string;
 };
 
+export type PaymentEvent = {
+  id: string;
+  intentId: string;
+  eventType: string;
+  status: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type PaymentIntent = {
+  id: string;
+  userId: string;
+  offerId: string;
+  provider: string;
+  platform: string;
+  status: string;
+  amount: number;
+  currency: string;
+  clientSecret: string;
+  receiptToken?: string | null;
+  providerReference?: string | null;
+  purchaseId?: string | null;
+  subscriptionId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  settledAt?: string | null;
+};
+
+export type PaymentIntentEnvelope = {
+  intent: PaymentIntent;
+  offer: EconomyOffer;
+  events: PaymentEvent[];
+  settlement?: EconomyCheckoutPayload | null;
+};
+
 type ApiCharacter = Partial<CharacterProfile> & {
   id: string;
   name: string;
