@@ -415,3 +415,115 @@ class CheckoutResponse(BaseModel):
     renewal_at: str = Field(alias="renewalAt")
     checkout_url: str | None = Field(default=None, alias="checkoutUrl")
     provider: str | None = None
+
+
+class EconomyUnlockResponse(BaseModel):
+    item_id: str = Field(alias="itemId")
+    category: str
+    title: str
+    summary: str
+    quantity: int
+
+
+class EconomyOfferResponse(BaseModel):
+    id: str
+    offer_type: str = Field(alias="offerType")
+    category: str
+    name: str
+    headline: str
+    summary: str
+    price: int
+    currency: str
+    badge: str
+    recurring: bool
+    grant_sparks: int = Field(alias="grantSparks")
+    bonus_sparks: int = Field(alias="bonusSparks")
+    highlight: str
+    tags: list[str]
+    plan_id: str | None = Field(default=None, alias="planId")
+    included_unlocks: list[EconomyUnlockResponse] = Field(alias="includedUnlocks")
+
+
+class EconomyRedemptionResponse(BaseModel):
+    id: str
+    category: str
+    title: str
+    summary: str
+    sparks_cost: int = Field(alias="sparksCost")
+    badge: str
+    repeatable: bool
+    tags: list[str]
+    grant: EconomyUnlockResponse
+
+
+class WalletLedgerEntryResponse(BaseModel):
+    id: str
+    currency: str
+    amount_delta: int = Field(alias="amountDelta")
+    balance_after: int = Field(alias="balanceAfter")
+    source_kind: str = Field(alias="sourceKind")
+    source_id: str = Field(alias="sourceId")
+    title: str
+    summary: str
+    created_at: str = Field(alias="createdAt")
+
+
+class EconomyInventoryItemResponse(BaseModel):
+    id: str
+    item_id: str = Field(alias="itemId")
+    source_kind: str = Field(alias="sourceKind")
+    source_id: str = Field(alias="sourceId")
+    category: str
+    title: str
+    summary: str
+    quantity: int
+    metadata: dict[str, object]
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+
+
+class EconomyCatalogResponse(BaseModel):
+    offers: list[EconomyOfferResponse]
+    redemptions: list[EconomyRedemptionResponse]
+
+
+class EconomyStateResponse(BaseModel):
+    wallet_balance: int = Field(alias="walletBalance")
+    membership: str
+    offers: list[EconomyOfferResponse]
+    redemptions: list[EconomyRedemptionResponse]
+    inventory: list[EconomyInventoryItemResponse]
+    ledger: list[WalletLedgerEntryResponse]
+    active_subscription: SubscriptionResponse | None = Field(
+        default=None,
+        alias="activeSubscription",
+    )
+    synced_at: str = Field(alias="syncedAt")
+
+
+class EconomyCheckoutResponse(BaseModel):
+    purchase_id: str = Field(alias="purchaseId")
+    subscription_id: str | None = Field(default=None, alias="subscriptionId")
+    offer: EconomyOfferResponse
+    status: str
+    wallet_balance: int = Field(alias="walletBalance")
+    latest_entry: WalletLedgerEntryResponse | None = Field(
+        default=None,
+        alias="latestEntry",
+    )
+    granted_unlocks: list[EconomyInventoryItemResponse] = Field(alias="grantedUnlocks")
+    active_subscription: SubscriptionResponse | None = Field(
+        default=None,
+        alias="activeSubscription",
+    )
+    checkout_url: str | None = Field(default=None, alias="checkoutUrl")
+    provider: str | None = None
+    synced_at: str = Field(alias="syncedAt")
+
+
+class EconomyRedeemResponse(BaseModel):
+    redemption: EconomyRedemptionResponse
+    wallet_balance: int = Field(alias="walletBalance")
+    latest_entry: WalletLedgerEntryResponse = Field(alias="latestEntry")
+    granted_item: EconomyInventoryItemResponse = Field(alias="grantedItem")
+    synced_at: str = Field(alias="syncedAt")

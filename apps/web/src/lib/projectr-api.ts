@@ -10,6 +10,7 @@ import {
   type BootstrapPayload,
   type CharacterProfile,
   type PartyScenario,
+  type SubscriptionRecord,
 } from "@/data/platform";
 
 export type SessionState = {
@@ -74,6 +75,107 @@ export type SavedItemRecord = {
   meta: string;
   chips: string[];
   createdAt: string;
+};
+
+export type EconomyUnlock = {
+  itemId: string;
+  category: string;
+  title: string;
+  summary: string;
+  quantity: number;
+};
+
+export type EconomyOffer = {
+  id: string;
+  offerType: string;
+  category: string;
+  name: string;
+  headline: string;
+  summary: string;
+  price: number;
+  currency: string;
+  badge: string;
+  recurring: boolean;
+  grantSparks: number;
+  bonusSparks: number;
+  highlight: string;
+  tags: string[];
+  planId?: string | null;
+  includedUnlocks: EconomyUnlock[];
+};
+
+export type EconomyRedemption = {
+  id: string;
+  category: string;
+  title: string;
+  summary: string;
+  sparksCost: number;
+  badge: string;
+  repeatable: boolean;
+  tags: string[];
+  grant: EconomyUnlock;
+};
+
+export type WalletLedgerEntry = {
+  id: string;
+  currency: string;
+  amountDelta: number;
+  balanceAfter: number;
+  sourceKind: string;
+  sourceId: string;
+  title: string;
+  summary: string;
+  createdAt: string;
+};
+
+export type EconomyInventoryItem = {
+  id: string;
+  itemId: string;
+  sourceKind: string;
+  sourceId: string;
+  category: string;
+  title: string;
+  summary: string;
+  quantity: number;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EconomyCatalogPayload = {
+  offers: EconomyOffer[];
+  redemptions: EconomyRedemption[];
+};
+
+export type EconomyStatePayload = EconomyCatalogPayload & {
+  walletBalance: number;
+  membership: string;
+  inventory: EconomyInventoryItem[];
+  ledger: WalletLedgerEntry[];
+  activeSubscription: SubscriptionRecord | null;
+  syncedAt: string;
+};
+
+export type EconomyCheckoutPayload = {
+  purchaseId: string;
+  subscriptionId: string | null;
+  offer: EconomyOffer;
+  status: string;
+  walletBalance: number;
+  latestEntry: WalletLedgerEntry | null;
+  grantedUnlocks: EconomyInventoryItem[];
+  activeSubscription: SubscriptionRecord | null;
+  checkoutUrl?: string | null;
+  provider?: string | null;
+  syncedAt: string;
+};
+
+export type EconomyRedeemPayload = {
+  redemption: EconomyRedemption;
+  walletBalance: number;
+  latestEntry: WalletLedgerEntry;
+  grantedItem: EconomyInventoryItem;
+  syncedAt: string;
 };
 
 type ApiCharacter = Partial<CharacterProfile> & {
@@ -246,6 +348,11 @@ export async function fetchBootstrapPayloadServer(
   const payload = await fetchServerJson<BootstrapPayload>(`/bootstrap${query}`);
 
   return mergeBootstrapPayload(payload);
+}
+
+export async function fetchEconomyCatalogServer(): Promise<EconomyCatalogPayload> {
+  const payload = await fetchServerJson<EconomyCatalogPayload>("/economy/catalog");
+  return payload ?? { offers: [], redemptions: [] };
 }
 
 export async function requestApi<T>(

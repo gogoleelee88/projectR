@@ -88,6 +88,217 @@ CHAT_REWARD_CATALOG = {
         },
     ],
 }
+ECONOMY_OFFERS = [
+    {
+        "id": "legend-pass-s01",
+        "offer_type": "subscription",
+        "category": "membership",
+        "name": "Legend Pass",
+        "headline": "Season 01 premium loop",
+        "summary": "Recurring premium access for flagship story, character, and event drops.",
+        "price": 19900,
+        "currency": "KRW",
+        "badge": "Best conversion",
+        "payload": {
+            "plan_id": "legend",
+            "recurring": True,
+            "grant_sparks": 2200,
+            "bonus_sparks": 400,
+            "highlight": "Priority access to season drops and premium endings.",
+            "tags": ["Flagship", "Recurring", "Premium story"],
+            "included_unlocks": [
+                {
+                    "item_id": "season-01-fast-lane",
+                    "category": "season-pass",
+                    "title": "Season 01 Fast Lane",
+                    "summary": "Priority access to premium story drops and finale rewards.",
+                    "quantity": 1,
+                },
+                {
+                    "item_id": "character-priority-queue",
+                    "category": "character-upgrade",
+                    "title": "Character Priority Queue",
+                    "summary": "Faster response lane for premium character sessions.",
+                    "quantity": 1,
+                },
+            ],
+        },
+    },
+    {
+        "id": "creator-pro-command",
+        "offer_type": "subscription",
+        "category": "creator-suite",
+        "name": "Creator Pro Command",
+        "headline": "Revenue-ready creator suite",
+        "summary": "Production tooling for creator publishing, launch reviews, and commerce packaging.",
+        "price": 49900,
+        "currency": "KRW",
+        "badge": "High ARPPU",
+        "payload": {
+            "plan_id": "creator-pro",
+            "recurring": True,
+            "grant_sparks": 5200,
+            "bonus_sparks": 1600,
+            "highlight": "Publishing priority, store placement, and launch packaging.",
+            "tags": ["Creator", "Commerce", "Launch ops"],
+            "included_unlocks": [
+                {
+                    "item_id": "creator-launch-console",
+                    "category": "creator-tool",
+                    "title": "Creator Launch Console",
+                    "summary": "Unlocks launch checklists, store bundles, and revenue reporting.",
+                    "quantity": 1,
+                },
+                {
+                    "item_id": "priority-review-lane",
+                    "category": "creator-tool",
+                    "title": "Priority Review Lane",
+                    "summary": "Moves releases into a faster review queue.",
+                    "quantity": 1,
+                },
+            ],
+        },
+    },
+    {
+        "id": "spark-vault-2400",
+        "offer_type": "bundle",
+        "category": "spark-pack",
+        "name": "Spark Vault 2400",
+        "headline": "Fast refill for active spenders",
+        "summary": "Top-up pack tuned for redemption-heavy players and live event shoppers.",
+        "price": 22000,
+        "currency": "KRW",
+        "badge": "Refill pack",
+        "payload": {
+            "recurring": False,
+            "grant_sparks": 2400,
+            "bonus_sparks": 240,
+            "highlight": "Balanced top-up for route keys, creator slots, and image credits.",
+            "tags": ["Top-up", "Flexible", "Mid-core"],
+            "included_unlocks": [
+                {
+                    "item_id": "vault-buyer-badge",
+                    "category": "wallet-bonus",
+                    "title": "Vault Buyer Badge",
+                    "summary": "Marks the account for bonus live-shop events.",
+                    "quantity": 1,
+                }
+            ],
+        },
+    },
+    {
+        "id": "orbit-collection-drop",
+        "offer_type": "bundle",
+        "category": "premium-drop",
+        "name": "Orbit Collection Drop",
+        "headline": "Collector bundle for story and character fans",
+        "summary": "A premium pack combining spendable sparks with collectible unlocks for flagship IP.",
+        "price": 35900,
+        "currency": "KRW",
+        "badge": "Collector",
+        "payload": {
+            "recurring": False,
+            "grant_sparks": 3200,
+            "bonus_sparks": 600,
+            "highlight": "Premium collectibles plus spendable sparks for the next return session.",
+            "tags": ["Collector", "IP bundle", "High intent"],
+            "included_unlocks": [
+                {
+                    "item_id": "astra-archive-collection",
+                    "category": "collectible",
+                    "title": "Astra Archive Collection",
+                    "summary": "Unlocks the collector-grade Astra memory archive.",
+                    "quantity": 1,
+                },
+                {
+                    "item_id": "millennium-vault-pass",
+                    "category": "story-upgrade",
+                    "title": "Millennium Vault Pass",
+                    "summary": "Unlocks premium vault notes for the Millennium campaign.",
+                    "quantity": 1,
+                },
+            ],
+        },
+    },
+]
+ECONOMY_REDEMPTIONS = [
+    {
+        "id": "astra-priority-channel",
+        "category": "character-upgrade",
+        "title": "Astra Priority Channel",
+        "summary": "Spend sparks to unlock Astra's higher-intensity premium conversation lane.",
+        "sparks_cost": 840,
+        "badge": "Character premium",
+        "payload": {
+            "repeatable": False,
+            "tags": ["Character", "Premium lane"],
+            "grant": {
+                "item_id": "astra-priority-channel",
+                "category": "character-upgrade",
+                "title": "Astra Priority Channel",
+                "summary": "Priority channel for Astra with premium prompt access.",
+                "quantity": 1,
+            },
+        },
+    },
+    {
+        "id": "millennium-route-key",
+        "category": "story-upgrade",
+        "title": "Millennium Route Key",
+        "summary": "Unlock the premium side-route key for the Millennium campaign.",
+        "sparks_cost": 1180,
+        "badge": "Story unlock",
+        "payload": {
+            "repeatable": False,
+            "tags": ["Story", "Route key"],
+            "grant": {
+                "item_id": "millennium-route-key",
+                "category": "story-upgrade",
+                "title": "Millennium Route Key",
+                "summary": "Opens the hidden route gate and vault notes for Millennium.",
+                "quantity": 1,
+            },
+        },
+    },
+    {
+        "id": "studio-cinematic-pack",
+        "category": "studio-credit",
+        "title": "Studio Cinematic Pack",
+        "summary": "Convert sparks into cinematic render credits for higher-output image sessions.",
+        "sparks_cost": 980,
+        "badge": "Repeatable",
+        "payload": {
+            "repeatable": True,
+            "tags": ["Studio", "Render credits"],
+            "grant": {
+                "item_id": "studio-cinematic-pack",
+                "category": "studio-credit",
+                "title": "Studio Cinematic Pack",
+                "summary": "Adds six cinematic render credits to the studio wallet.",
+                "quantity": 6,
+            },
+        },
+    },
+    {
+        "id": "creator-drop-slot",
+        "category": "creator-slot",
+        "title": "Creator Drop Slot",
+        "summary": "Spend sparks to open another premium storefront slot for creator launches.",
+        "sparks_cost": 1450,
+        "badge": "Repeatable",
+        "payload": {
+            "repeatable": True,
+            "tags": ["Creator", "Storefront"],
+            "grant": {
+                "item_id": "creator-drop-slot",
+                "category": "creator-slot",
+                "title": "Creator Drop Slot",
+                "summary": "Adds one premium storefront slot to the creator console.",
+                "quantity": 1,
+            },
+        },
+    },
+]
 
 
 def utc_now() -> str:
@@ -256,6 +467,60 @@ def bootstrap_database() -> None:
                 status TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS economy_offers (
+                id TEXT PRIMARY KEY,
+                offer_type TEXT NOT NULL,
+                category TEXT NOT NULL,
+                name TEXT NOT NULL,
+                headline TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                price INTEGER NOT NULL,
+                currency TEXT NOT NULL,
+                badge TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                active INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS economy_redemptions (
+                id TEXT PRIMARY KEY,
+                category TEXT NOT NULL,
+                title TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                sparks_cost INTEGER NOT NULL,
+                badge TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                active INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS wallet_ledger (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                currency TEXT NOT NULL,
+                amount_delta INTEGER NOT NULL,
+                balance_after INTEGER NOT NULL,
+                source_kind TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_wallet_ledger_user_created_at
+                ON wallet_ledger (user_id, created_at DESC);
+            CREATE TABLE IF NOT EXISTS economy_inventory (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                item_id TEXT NOT NULL,
+                source_kind TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                category TEXT NOT NULL,
+                title TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                metadata_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (user_id, item_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_economy_inventory_user_updated_at
+                ON economy_inventory (user_id, updated_at DESC);
             CREATE TABLE IF NOT EXISTS releases (
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
@@ -608,6 +873,74 @@ def _seed_database(connection: sqlite3.Connection) -> None:
                 ),
             )
 
+    if _table_is_empty(connection, "economy_offers"):
+        for offer in ECONOMY_OFFERS:
+            connection.execute(
+                """
+                INSERT INTO economy_offers (
+                    id, offer_type, category, name, headline, summary,
+                    price, currency, badge, payload_json, active
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    offer["id"],
+                    offer["offer_type"],
+                    offer["category"],
+                    offer["name"],
+                    offer["headline"],
+                    offer["summary"],
+                    offer["price"],
+                    offer["currency"],
+                    offer["badge"],
+                    json.dumps(offer["payload"], ensure_ascii=False),
+                    1,
+                ),
+            )
+
+    if _table_is_empty(connection, "economy_redemptions"):
+        for redemption in ECONOMY_REDEMPTIONS:
+            connection.execute(
+                """
+                INSERT INTO economy_redemptions (
+                    id, category, title, summary, sparks_cost, badge, payload_json, active
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    redemption["id"],
+                    redemption["category"],
+                    redemption["title"],
+                    redemption["summary"],
+                    redemption["sparks_cost"],
+                    redemption["badge"],
+                    json.dumps(redemption["payload"], ensure_ascii=False),
+                    1,
+                ),
+            )
+
+    if _table_is_empty(connection, "wallet_ledger"):
+        users = connection.execute("SELECT id, sparks FROM users ORDER BY created_at").fetchall()
+        for user in users:
+            connection.execute(
+                """
+                INSERT INTO wallet_ledger (
+                    id, user_id, currency, amount_delta, balance_after,
+                    source_kind, source_id, title, summary, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(uuid4()),
+                    user["id"],
+                    "sparks",
+                    user["sparks"],
+                    user["sparks"],
+                    "system-bootstrap",
+                    "initial-balance",
+                    "Opening Spark Bank",
+                    "Imported starting balance for the account wallet.",
+                    utc_now(),
+                ),
+            )
+
 
 def _serialize_work(connection: sqlite3.Connection, row: sqlite3.Row) -> dict:
     tags = [
@@ -644,6 +977,221 @@ def _public_user(row: sqlite3.Row) -> dict[str, str | int]:
         "sparks": row["sparks"],
         "focus": row["focus"],
     }
+
+
+def _serialize_economy_offer(row: sqlite3.Row) -> dict:
+    payload = json.loads(row["payload_json"])
+    return {
+        "id": row["id"],
+        "offer_type": row["offer_type"],
+        "category": row["category"],
+        "name": row["name"],
+        "headline": row["headline"],
+        "summary": row["summary"],
+        "price": row["price"],
+        "currency": row["currency"],
+        "badge": row["badge"],
+        "recurring": bool(payload.get("recurring", False)),
+        "grant_sparks": payload.get("grant_sparks", 0),
+        "bonus_sparks": payload.get("bonus_sparks", 0),
+        "highlight": payload.get("highlight", ""),
+        "tags": payload.get("tags", []),
+        "plan_id": payload.get("plan_id"),
+        "included_unlocks": payload.get("included_unlocks", []),
+    }
+
+
+def _serialize_economy_redemption(row: sqlite3.Row) -> dict:
+    payload = json.loads(row["payload_json"])
+    grant = payload.get("grant", {})
+    return {
+        "id": row["id"],
+        "category": row["category"],
+        "title": row["title"],
+        "summary": row["summary"],
+        "sparks_cost": row["sparks_cost"],
+        "badge": row["badge"],
+        "repeatable": bool(payload.get("repeatable", False)),
+        "tags": payload.get("tags", []),
+        "grant": {
+            "item_id": grant.get("item_id", row["id"]),
+            "category": grant.get("category", row["category"]),
+            "title": grant.get("title", row["title"]),
+            "summary": grant.get("summary", row["summary"]),
+            "quantity": int(grant.get("quantity", 1)),
+        },
+    }
+
+
+def _serialize_wallet_entry(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "currency": row["currency"],
+        "amount_delta": row["amount_delta"],
+        "balance_after": row["balance_after"],
+        "source_kind": row["source_kind"],
+        "source_id": row["source_id"],
+        "title": row["title"],
+        "summary": row["summary"],
+        "created_at": row["created_at"],
+    }
+
+
+def _serialize_inventory_item(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "item_id": row["item_id"],
+        "source_kind": row["source_kind"],
+        "source_id": row["source_id"],
+        "category": row["category"],
+        "title": row["title"],
+        "summary": row["summary"],
+        "quantity": row["quantity"],
+        "metadata": json.loads(row["metadata_json"]),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _record_spark_ledger_entry(
+    connection: sqlite3.Connection,
+    *,
+    user_id: str,
+    amount_delta: int,
+    source_kind: str,
+    source_id: str,
+    title: str,
+    summary: str,
+) -> dict:
+    user_row = connection.execute(
+        "SELECT sparks FROM users WHERE id = ?",
+        (user_id,),
+    ).fetchone()
+    if user_row is None:
+        raise ValueError("User not found")
+
+    next_balance = user_row["sparks"] + amount_delta
+    if next_balance < 0:
+        raise ValueError("Insufficient sparks")
+
+    created_at = utc_now()
+    entry_id = str(uuid4())
+    connection.execute(
+        "UPDATE users SET sparks = ? WHERE id = ?",
+        (next_balance, user_id),
+    )
+    connection.execute(
+        """
+        INSERT INTO wallet_ledger (
+            id, user_id, currency, amount_delta, balance_after,
+            source_kind, source_id, title, summary, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            entry_id,
+            user_id,
+            "sparks",
+            amount_delta,
+            next_balance,
+            source_kind,
+            source_id,
+            title,
+            summary,
+            created_at,
+        ),
+    )
+    return {
+        "id": entry_id,
+        "currency": "sparks",
+        "amount_delta": amount_delta,
+        "balance_after": next_balance,
+        "source_kind": source_kind,
+        "source_id": source_id,
+        "title": title,
+        "summary": summary,
+        "created_at": created_at,
+    }
+
+
+def _grant_inventory_item(
+    connection: sqlite3.Connection,
+    *,
+    user_id: str,
+    item_id: str,
+    source_kind: str,
+    source_id: str,
+    category: str,
+    title: str,
+    summary: str,
+    quantity: int = 1,
+    metadata: dict | None = None,
+) -> dict:
+    current = connection.execute(
+        """
+        SELECT *
+        FROM economy_inventory
+        WHERE user_id = ? AND item_id = ?
+        """,
+        (user_id, item_id),
+    ).fetchone()
+    now = utc_now()
+    payload = json.dumps(metadata or {}, ensure_ascii=False)
+
+    if current is None:
+        item_id_pk = str(uuid4())
+        connection.execute(
+            """
+            INSERT INTO economy_inventory (
+                id, user_id, item_id, source_kind, source_id, category,
+                title, summary, quantity, metadata_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item_id_pk,
+                user_id,
+                item_id,
+                source_kind,
+                source_id,
+                category,
+                title,
+                summary,
+                quantity,
+                payload,
+                now,
+                now,
+            ),
+        )
+        row = connection.execute(
+            "SELECT * FROM economy_inventory WHERE id = ?",
+            (item_id_pk,),
+        ).fetchone()
+        return _serialize_inventory_item(row)
+
+    next_quantity = current["quantity"] + quantity
+    connection.execute(
+        """
+        UPDATE economy_inventory
+        SET source_kind = ?, source_id = ?, category = ?, title = ?, summary = ?,
+            quantity = ?, metadata_json = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            source_kind,
+            source_id,
+            category,
+            title,
+            summary,
+            next_quantity,
+            payload,
+            now,
+            current["id"],
+        ),
+    )
+    row = connection.execute(
+        "SELECT * FROM economy_inventory WHERE id = ?",
+        (current["id"],),
+    ).fetchone()
+    return _serialize_inventory_item(row)
 
 
 def _normalize_handle(seed: str) -> str:
@@ -1157,9 +1705,14 @@ def _record_story_completion(
             granted_at,
         ),
     )
-    connection.execute(
-        "UPDATE users SET sparks = sparks + ? WHERE id = ?",
-        (sparks_awarded, user_id),
+    _record_spark_ledger_entry(
+        connection,
+        user_id=user_id,
+        amount_delta=sparks_awarded,
+        source_kind="story-ending",
+        source_id=completion["ending_id"],
+        title=completion["reward"],
+        summary=f'{completion["ending_title"]} clear reward credited to the spark bank.',
     )
 
     return {
@@ -1579,9 +2132,14 @@ def _record_character_reward_unlocks(
                 unlocked_at,
             ),
         )
-        connection.execute(
-            "UPDATE users SET sparks = sparks + ? WHERE id = ?",
-            (reward["sparks_awarded"], user_id),
+        _record_spark_ledger_entry(
+            connection,
+            user_id=user_id,
+            amount_delta=reward["sparks_awarded"],
+            source_kind="character-bond",
+            source_id=reward["id"],
+            title=reward["title"],
+            summary=f'{character_id} bond reward credited after crossing the affinity threshold.',
         )
         granted_payload = {
             "awarded": True,
@@ -1912,6 +2470,173 @@ def list_subscriptions(user_id: str | None = None) -> list[dict]:
         ]
 
 
+def list_economy_offers() -> list[dict]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM economy_offers
+            WHERE active = 1
+            ORDER BY price ASC, name ASC
+            """
+        ).fetchall()
+        return [_serialize_economy_offer(row) for row in rows]
+
+
+def list_economy_redemptions() -> list[dict]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM economy_redemptions
+            WHERE active = 1
+            ORDER BY sparks_cost ASC, title ASC
+            """
+        ).fetchall()
+        return [_serialize_economy_redemption(row) for row in rows]
+
+
+def list_wallet_ledger(user_id: str, limit: int = 18) -> list[dict]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM wallet_ledger
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        ).fetchall()
+        return [_serialize_wallet_entry(row) for row in rows]
+
+
+def list_economy_inventory(user_id: str) -> list[dict]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM economy_inventory
+            WHERE user_id = ?
+            ORDER BY updated_at DESC
+            """,
+            (user_id,),
+        ).fetchall()
+        return [_serialize_inventory_item(row) for row in rows]
+
+
+def get_economy_catalog() -> dict:
+    return {
+        "offers": list_economy_offers(),
+        "redemptions": list_economy_redemptions(),
+    }
+
+
+def get_economy_state(user_id: str) -> dict:
+    with get_connection() as connection:
+        user_row = connection.execute(
+            "SELECT id, sparks, membership FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        if user_row is None:
+            raise ValueError("User not found")
+
+        inventory_rows = connection.execute(
+            """
+            SELECT *
+            FROM economy_inventory
+            WHERE user_id = ?
+            ORDER BY updated_at DESC
+            """,
+            (user_id,),
+        ).fetchall()
+        ledger_rows = connection.execute(
+            """
+            SELECT *
+            FROM wallet_ledger
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT 18
+            """,
+            (user_id,),
+        ).fetchall()
+        offer_rows = connection.execute(
+            "SELECT * FROM economy_offers WHERE active = 1 ORDER BY price ASC, name ASC"
+        ).fetchall()
+        redemption_rows = connection.execute(
+            """
+            SELECT *
+            FROM economy_redemptions
+            WHERE active = 1
+            ORDER BY sparks_cost ASC, title ASC
+            """
+        ).fetchall()
+        active_subscription = connection.execute(
+            """
+            SELECT s.id, s.user_id, s.plan_id, s.status, s.renewal_at, s.created_at,
+                   p.name AS plan_name, p.price
+            FROM subscriptions s
+            JOIN plans p ON p.id = s.plan_id
+            WHERE s.user_id = ? AND s.status = 'active'
+            ORDER BY s.created_at DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+
+    return {
+        "wallet_balance": user_row["sparks"],
+        "membership": user_row["membership"],
+        "offers": [_serialize_economy_offer(row) for row in offer_rows],
+        "redemptions": [_serialize_economy_redemption(row) for row in redemption_rows],
+        "inventory": [_serialize_inventory_item(row) for row in inventory_rows],
+        "ledger": [_serialize_wallet_entry(row) for row in ledger_rows],
+        "active_subscription": None
+        if active_subscription is None
+        else {
+            "id": active_subscription["id"],
+            "user_id": active_subscription["user_id"],
+            "plan_id": active_subscription["plan_id"],
+            "plan_name": active_subscription["plan_name"],
+            "price": active_subscription["price"],
+            "status": active_subscription["status"],
+            "renewal_at": active_subscription["renewal_at"],
+            "created_at": active_subscription["created_at"],
+        },
+        "synced_at": utc_now(),
+    }
+
+
+def _grant_offer_unlocks(
+    connection: sqlite3.Connection,
+    *,
+    user_id: str,
+    source_kind: str,
+    source_id: str,
+    unlocks: list[dict],
+) -> list[dict]:
+    granted: list[dict] = []
+    for unlock in unlocks:
+        granted.append(
+            _grant_inventory_item(
+                connection,
+                user_id=user_id,
+                item_id=unlock["item_id"],
+                source_kind=source_kind,
+                source_id=source_id,
+                category=unlock["category"],
+                title=unlock["title"],
+                summary=unlock["summary"],
+                quantity=int(unlock.get("quantity", 1)),
+                metadata={
+                    "itemId": unlock["item_id"],
+                    "category": unlock["category"],
+                },
+            )
+        )
+    return granted
+
+
 def create_checkout(
     user_id: str,
     plan_id: str,
@@ -1920,6 +2645,9 @@ def create_checkout(
     amount: int,
     currency: str = "KRW",
     status: str = "paid",
+    spark_bonus: int = 0,
+    included_unlocks: list[dict] | None = None,
+    purchase_title: str | None = None,
 ) -> dict:
     purchase_id = str(uuid4())
     subscription_id = str(uuid4())
@@ -1942,6 +2670,15 @@ def create_checkout(
             """,
             (purchase_id, user_id, sku, category, amount, currency, status, created_at),
         )
+        if status == "paid":
+            connection.execute(
+                """
+                UPDATE subscriptions
+                SET status = 'replaced'
+                WHERE user_id = ? AND status = 'active'
+                """,
+                (user_id,),
+            )
         connection.execute(
             """
             INSERT INTO subscriptions (id, user_id, plan_id, status, renewal_at, created_at)
@@ -1956,11 +2693,31 @@ def create_checkout(
                 created_at,
             ),
         )
+        latest_entry = None
+        granted_unlocks: list[dict] = []
         if status == "paid":
             connection.execute(
                 "UPDATE users SET membership = ? WHERE id = ?",
                 (plan["name"], user_id),
             )
+            if spark_bonus > 0:
+                latest_entry = _record_spark_ledger_entry(
+                    connection,
+                    user_id=user_id,
+                    amount_delta=spark_bonus,
+                    source_kind="subscription-checkout",
+                    source_id=sku,
+                    title=purchase_title or plan["name"],
+                    summary=f'{purchase_title or plan["name"]} purchase credited sparks to the wallet.',
+                )
+            if included_unlocks:
+                granted_unlocks = _grant_offer_unlocks(
+                    connection,
+                    user_id=user_id,
+                    source_kind="subscription-checkout",
+                    source_id=sku,
+                    unlocks=included_unlocks,
+                )
         connection.commit()
 
     return {
@@ -1969,6 +2726,186 @@ def create_checkout(
         "status": status,
         "plan_id": plan_id,
         "renewal_at": renewal_at,
+        "wallet_balance": None if latest_entry is None else latest_entry["balance_after"],
+        "latest_entry": latest_entry,
+        "granted_unlocks": granted_unlocks,
+    }
+
+
+def checkout_economy_offer(
+    user_id: str,
+    *,
+    offer_id: str,
+    status: str = "paid",
+) -> dict:
+    with get_connection() as connection:
+        offer_row = connection.execute(
+            """
+            SELECT *
+            FROM economy_offers
+            WHERE id = ? AND active = 1
+            """,
+            (offer_id,),
+        ).fetchone()
+        user_row = connection.execute(
+            "SELECT id FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        if user_row is None or offer_row is None:
+            raise ValueError("Invalid user or offer")
+
+        offer = _serialize_economy_offer(offer_row)
+
+    if offer["offer_type"] == "subscription":
+        if not offer["plan_id"]:
+            raise ValueError("Subscription offer is missing a plan mapping")
+        total_sparks = offer["grant_sparks"] + offer["bonus_sparks"]
+        result = create_checkout(
+            user_id=user_id,
+            plan_id=offer["plan_id"],
+            sku=offer_id,
+            category=offer["category"],
+            amount=offer["price"],
+            currency=offer["currency"],
+            status=status,
+            spark_bonus=total_sparks,
+            included_unlocks=offer["included_unlocks"],
+            purchase_title=offer["name"],
+        )
+        state = get_economy_state(user_id)
+        return {
+            "purchase_id": result["purchase_id"],
+            "subscription_id": result["subscription_id"],
+            "offer": offer,
+            "status": result["status"],
+            "wallet_balance": state["wallet_balance"],
+            "latest_entry": result["latest_entry"],
+            "granted_unlocks": result["granted_unlocks"],
+            "active_subscription": state["active_subscription"],
+            "synced_at": state["synced_at"],
+        }
+
+    purchase_id = str(uuid4())
+    created_at = utc_now()
+    latest_entry = None
+    granted_unlocks: list[dict] = []
+
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO purchases (id, user_id, sku, category, amount, currency, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                purchase_id,
+                user_id,
+                offer_id,
+                offer["category"],
+                offer["price"],
+                offer["currency"],
+                status,
+                created_at,
+            ),
+        )
+
+        if status == "paid":
+            total_sparks = offer["grant_sparks"] + offer["bonus_sparks"]
+            if total_sparks > 0:
+                latest_entry = _record_spark_ledger_entry(
+                    connection,
+                    user_id=user_id,
+                    amount_delta=total_sparks,
+                    source_kind="offer-checkout",
+                    source_id=offer_id,
+                    title=offer["name"],
+                    summary=f'{offer["name"]} purchase credited sparks to the wallet.',
+                )
+            granted_unlocks = _grant_offer_unlocks(
+                connection,
+                user_id=user_id,
+                source_kind="offer-checkout",
+                source_id=offer_id,
+                unlocks=offer["included_unlocks"],
+            )
+        connection.commit()
+
+    state = get_economy_state(user_id)
+    return {
+        "purchase_id": purchase_id,
+        "subscription_id": None,
+        "offer": offer,
+        "status": status,
+        "wallet_balance": state["wallet_balance"],
+        "latest_entry": latest_entry,
+        "granted_unlocks": granted_unlocks,
+        "active_subscription": state["active_subscription"],
+        "synced_at": state["synced_at"],
+    }
+
+
+def redeem_economy_item(user_id: str, *, redemption_id: str) -> dict:
+    with get_connection() as connection:
+        redemption_row = connection.execute(
+            """
+            SELECT *
+            FROM economy_redemptions
+            WHERE id = ? AND active = 1
+            """,
+            (redemption_id,),
+        ).fetchone()
+        user_row = connection.execute(
+            "SELECT id FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        if user_row is None or redemption_row is None:
+            raise ValueError("Invalid user or redemption")
+
+        redemption = _serialize_economy_redemption(redemption_row)
+        existing_inventory = connection.execute(
+            """
+            SELECT *
+            FROM economy_inventory
+            WHERE user_id = ? AND item_id = ?
+            """,
+            (user_id, redemption["grant"]["item_id"]),
+        ).fetchone()
+        if existing_inventory is not None and not redemption["repeatable"]:
+            raise ValueError("Reward already redeemed")
+
+        latest_entry = _record_spark_ledger_entry(
+            connection,
+            user_id=user_id,
+            amount_delta=-redemption["sparks_cost"],
+            source_kind="reward-redemption",
+            source_id=redemption_id,
+            title=redemption["title"],
+            summary=f'{redemption["title"]} redeemed from the spark bank.',
+        )
+        granted_item = _grant_inventory_item(
+            connection,
+            user_id=user_id,
+            item_id=redemption["grant"]["item_id"],
+            source_kind="reward-redemption",
+            source_id=redemption_id,
+            category=redemption["grant"]["category"],
+            title=redemption["grant"]["title"],
+            summary=redemption["grant"]["summary"],
+            quantity=redemption["grant"]["quantity"],
+            metadata={
+                "rewardId": redemption_id,
+                "repeatable": redemption["repeatable"],
+                "category": redemption["grant"]["category"],
+            },
+        )
+        connection.commit()
+
+    state = get_economy_state(user_id)
+    return {
+        "redemption": redemption,
+        "wallet_balance": state["wallet_balance"],
+        "latest_entry": latest_entry,
+        "granted_item": granted_item,
+        "synced_at": state["synced_at"],
     }
 
 
@@ -2234,6 +3171,26 @@ def create_user(name: str, email: str, password: str, role: str = "player") -> d
                 defaults["location"],
                 defaults["avatar_gradient"],
                 json.dumps(defaults["favorite_genres"], ensure_ascii=False),
+                utc_now(),
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO wallet_ledger (
+                id, user_id, currency, amount_delta, balance_after,
+                source_kind, source_id, title, summary, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid4()),
+                user_id,
+                "sparks",
+                1200,
+                1200,
+                "system-onboarding",
+                "starter-wallet",
+                "Starter Spark Bank",
+                "Initial sparks credited for the first onboarding session.",
                 utc_now(),
             ),
         )
