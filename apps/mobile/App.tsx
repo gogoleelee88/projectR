@@ -69,6 +69,10 @@ export default function App() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [transactionId, setTransactionId] = useState("");
+  const [originalTransactionId, setOriginalTransactionId] = useState("");
+  const [purchaseToken, setPurchaseToken] = useState("");
+  const [packageName, setPackageName] = useState("");
   const [message, setMessage] = useState("");
   const [pendingId, setPendingId] = useState<string | null>(null);
 
@@ -149,11 +153,12 @@ export default function App() {
     }
     setPendingId(offer.id);
     const provider =
-      Platform.OS === "android"
+      process.env.EXPO_PUBLIC_MOBILE_BILLING_PROVIDER ??
+      (Platform.OS === "android"
         ? "play-billing-sandbox"
         : Platform.OS === "ios"
           ? "app-store-sandbox"
-          : "web-sandbox";
+          : "web-sandbox");
     const createIntent = await requestJson<PaymentEnvelope>(
       apiBase,
       "/payments/intents",
@@ -170,6 +175,31 @@ export default function App() {
     }
 
     const receiptId = `${provider}-${offer.id}-${Date.now()}`;
+    const verificationPayload: Record<string, string> = {
+      channel: "mobile",
+      productId: offer.id,
+    };
+    if (provider === "app-store") {
+      if (!transactionId && !originalTransactionId) {
+        setPendingId(null);
+        setMessage("Provide an App Store transactionId or originalTransactionId.");
+        return;
+      }
+      if (transactionId) verificationPayload.transactionId = transactionId;
+      if (originalTransactionId) verificationPayload.originalTransactionId = originalTransactionId;
+      verificationPayload.environment =
+        process.env.EXPO_PUBLIC_APPLE_ENVIRONMENT ?? "sandbox";
+    }
+    if (provider === "play-billing") {
+      if (!purchaseToken || !packageName) {
+        setPendingId(null);
+        setMessage("Provide a Play purchaseToken and packageName.");
+        return;
+      }
+      verificationPayload.purchaseToken = purchaseToken;
+      verificationPayload.packageName = packageName;
+      verificationPayload.productId = offer.id;
+    }
     const confirmIntent = await requestJson<PaymentEnvelope>(
       apiBase,
       `/payments/intents/${encodeURIComponent(createIntent.data.intent.id)}/confirm`,
@@ -177,8 +207,16 @@ export default function App() {
         method: "POST",
         body: JSON.stringify({
           receiptToken: `${receiptId}-receipt`,
-          providerReference: receiptId,
-          verificationPayload: { channel: "mobile", mode: "sandbox-auto-approve" },
+          providerReference:
+            provider === "app-store"
+              ? transactionId || originalTransactionId || receiptId
+              : provider === "play-billing"
+                ? purchaseToken || receiptId
+                : receiptId,
+          verificationPayload:
+            provider.endsWith("-sandbox") || provider === "web-sandbox"
+              ? { channel: "mobile", mode: "sandbox-auto-approve" }
+              : verificationPayload,
         }),
       },
       token,
@@ -249,6 +287,14 @@ export default function App() {
               <Pressable style={styles.secondaryButton} onPress={() => void handleLogout()}><Text style={styles.secondaryButtonText}>Logout</Text></Pressable>
             </View>
           )}
+        </View>
+
+        <View style={styles.panel}>
+          <Text style={styles.panelTitle}>Provider bridge</Text>
+          <TextInput value={transactionId} onChangeText={setTransactionId} placeholder="App Store transactionId" placeholderTextColor="#7b8495" style={styles.input} autoCapitalize="none" />
+          <TextInput value={originalTransactionId} onChangeText={setOriginalTransactionId} placeholder="App Store originalTransactionId" placeholderTextColor="#7b8495" style={styles.input} autoCapitalize="none" />
+          <TextInput value={purchaseToken} onChangeText={setPurchaseToken} placeholder="Play purchaseToken" placeholderTextColor="#7b8495" style={styles.input} autoCapitalize="none" />
+          <TextInput value={packageName} onChangeText={setPackageName} placeholder="Play packageName" placeholderTextColor="#7b8495" style={styles.input} autoCapitalize="none" />
         </View>
 
         <View style={styles.tabRow}>

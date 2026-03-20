@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from fastapi import FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from sqlite3 import IntegrityError
 
@@ -22,6 +22,7 @@ from .db import (
     create_user,
     get_economy_catalog,
     get_economy_offer_by_id,
+    get_payment_intent_by_provider_reference,
     get_economy_state,
     fetch_bootstrap_payload,
     generate_image_shot,
@@ -47,6 +48,7 @@ from .db import (
     list_subscriptions,
     remove_saved_item,
     redeem_economy_item,
+    record_payment_provider_state,
     revoke_auth_session,
     resolve_party_action,
     save_item,
@@ -55,6 +57,13 @@ from .db import (
     update_user_profile,
 )
 from .party import party_sessions
+from .payment_providers import (
+    ProviderConfigError,
+    ProviderVerificationError,
+    create_provider_payment,
+    parse_stripe_webhook,
+    verify_provider_payment,
+)
 from .runtime import (
     request_live_chat,
     request_live_checkout,
@@ -389,6 +398,14 @@ def _serialize_economy_checkout(
     )
 
 
+def _extract_provider_payload(events: list[dict]) -> dict | None:
+    for event in events:
+        payload = event.get("payload")
+        if isinstance(payload, dict) and isinstance(payload.get("providerPayload"), dict):
+            return payload["providerPayload"]
+    return None
+
+
 def _serialize_payment_event(event: dict) -> PaymentEventResponse:
     return PaymentEventResponse.model_validate(
         {
@@ -402,7 +419,11 @@ def _serialize_payment_event(event: dict) -> PaymentEventResponse:
     )
 
 
-def _serialize_payment_intent(intent: dict) -> PaymentIntentResponse:
+def _serialize_payment_intent(
+    intent: dict,
+    *,
+    provider_payload: dict | None = None,
+) -> PaymentIntentResponse:
     return PaymentIntentResponse.model_validate(
         {
             "id": intent["id"],
@@ -418,6 +439,7 @@ def _serialize_payment_intent(intent: dict) -> PaymentIntentResponse:
             "providerReference": intent["provider_reference"],
             "purchaseId": intent["purchase_id"],
             "subscriptionId": intent["subscription_id"],
+            "providerPayload": provider_payload,
             "createdAt": intent["created_at"],
             "updatedAt": intent["updated_at"],
             "settledAt": intent["settled_at"],
@@ -427,9 +449,13 @@ def _serialize_payment_intent(intent: dict) -> PaymentIntentResponse:
 
 def _serialize_payment_envelope(payload: dict) -> PaymentIntentEnvelopeResponse:
     settlement = payload.get("settlement")
+    provider_payload = _extract_provider_payload(payload["events"])
     return PaymentIntentEnvelopeResponse.model_validate(
         {
-            "intent": _serialize_payment_intent(payload["intent"]).model_dump(
+            "intent": _serialize_payment_intent(
+                payload["intent"],
+                provider_payload=provider_payload,
+            ).model_dump(
                 mode="json",
                 by_alias=True,
             ),
@@ -1378,6 +1404,36 @@ def create_payment_intent_route(
         status_code = 404 if message in {"Offer not found", "User not found"} else 400
         raise HTTPException(status_code=status_code, detail=message) from exc
 
+    try:
+        provider_result = create_provider_payment(
+            payload.provider,
+            intent=result["intent"],
+            offer=result["offer"],
+            user_id=user["id"],
+        )
+    except ProviderConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ProviderVerificationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if provider_result is not None:
+        updated = record_payment_provider_state(
+            result["intent"]["id"],
+            provider_reference=provider_result.get("provider_reference"),
+            status=str(provider_result.get("status", "pending")),
+            event_type="provider.intent_created",
+            payload={
+                "providerPayload": provider_result.get("provider_payload"),
+                "verification": provider_result.get("verification", {}),
+            },
+        )
+        result = {
+            "intent": {key: value for key, value in updated.items() if key != "events"},
+            "offer": result["offer"],
+            "events": updated["events"],
+            "settlement": None,
+        }
+
     return _serialize_payment_envelope(result)
 
 
@@ -1393,20 +1449,39 @@ def confirm_payment_intent_route(
         raise HTTPException(status_code=404, detail="Payment intent not found")
     if existing_intent["user_id"] != user["id"]:
         raise HTTPException(status_code=403, detail="Payment intent does not belong to this user")
+    offer = get_economy_offer_by_id(existing_intent["offer_id"])
+    if offer is None:
+        raise HTTPException(status_code=404, detail="Offer not found")
 
     verification_payload = payload.verification_payload or {}
-    provider_reference = payload.provider_reference
-    verification = request_live_receipt_verification(
-        intent_id=intent_id,
-        user_id=user["id"],
-        offer_id=existing_intent["offer_id"],
-        provider=existing_intent["provider"],
-        platform=existing_intent["platform"],
-        amount=existing_intent["amount"],
-        currency=existing_intent["currency"],
-        receipt_token=payload.receipt_token,
-        client_secret=existing_intent["client_secret"],
-    )
+    provider_reference = payload.provider_reference or existing_intent["provider_reference"]
+    verification = None
+    if existing_intent["provider"] in {"stripe", "app-store", "play-billing"}:
+        try:
+            verification = verify_provider_payment(
+                existing_intent["provider"],
+                intent=existing_intent,
+                offer=offer,
+                receipt_token=payload.receipt_token,
+                provider_reference=provider_reference,
+                verification_payload=verification_payload,
+            )
+        except ProviderConfigError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except ProviderVerificationError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+    else:
+        verification = request_live_receipt_verification(
+            intent_id=intent_id,
+            user_id=user["id"],
+            offer_id=existing_intent["offer_id"],
+            provider=existing_intent["provider"],
+            platform=existing_intent["platform"],
+            amount=existing_intent["amount"],
+            currency=existing_intent["currency"],
+            receipt_token=payload.receipt_token,
+            client_secret=existing_intent["client_secret"],
+        )
     settlement_status = "paid"
     if verification is not None:
         settlement_status = str(verification.get("status", "paid"))
@@ -1434,6 +1509,41 @@ def confirm_payment_intent_route(
         raise HTTPException(status_code=status_code, detail=message) from exc
 
     return _serialize_payment_envelope(result)
+
+
+@app.post("/webhooks/stripe")
+async def stripe_webhook(request: Request) -> dict[str, str]:
+    raw_body = await request.body()
+    try:
+        parsed = parse_stripe_webhook(request.headers.get("Stripe-Signature"), raw_body)
+    except ProviderConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ProviderVerificationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if parsed is None:
+        return {"status": "ignored"}
+
+    existing_intent = get_payment_intent(parsed["intent_id"])
+    if existing_intent is None:
+        existing_intent = get_payment_intent_by_provider_reference(
+            "stripe",
+            parsed["provider_reference"],
+        )
+    if existing_intent is None:
+        return {"status": "ignored"}
+
+    result = settle_payment_intent(
+        existing_intent["id"],
+        provider_reference=parsed["provider_reference"],
+        status=parsed["status"],
+        verification_payload=parsed["verification"],
+    )
+    return {
+        "status": "processed",
+        "intentId": existing_intent["id"],
+        "paymentStatus": result["intent"]["status"],
+    }
 
 
 @app.get("/ops/signals")

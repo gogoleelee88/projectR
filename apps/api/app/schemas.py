@@ -567,6 +567,7 @@ class PaymentIntentResponse(BaseModel):
     provider_reference: str | None = Field(default=None, alias="providerReference")
     purchase_id: str | None = Field(default=None, alias="purchaseId")
     subscription_id: str | None = Field(default=None, alias="subscriptionId")
+    provider_payload: dict[str, object] | None = Field(default=None, alias="providerPayload")
     created_at: str = Field(alias="createdAt")
     updated_at: str = Field(alias="updatedAt")
     settled_at: str | None = Field(default=None, alias="settledAt")

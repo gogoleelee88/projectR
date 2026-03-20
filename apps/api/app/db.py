@@ -2806,6 +2806,79 @@ def get_payment_intent(intent_id: str) -> dict | None:
         }
 
 
+def get_payment_intent_by_provider_reference(
+    provider: str,
+    provider_reference: str,
+) -> dict | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT *
+            FROM payment_intents
+            WHERE provider = ? AND provider_reference = ?
+            """,
+            (provider, provider_reference),
+        ).fetchone()
+        if row is None:
+            return None
+
+        events = connection.execute(
+            """
+            SELECT *
+            FROM payment_events
+            WHERE intent_id = ?
+            ORDER BY created_at DESC
+            """,
+            (row["id"],),
+        ).fetchall()
+        return {
+            **_serialize_payment_intent(row),
+            "events": [_serialize_payment_event(event) for event in events],
+        }
+
+
+def record_payment_provider_state(
+    intent_id: str,
+    *,
+    provider_reference: str | None,
+    status: str,
+    event_type: str,
+    payload: dict | None = None,
+    receipt_token: str | None = None,
+) -> dict:
+    with get_connection() as connection:
+        connection.execute(
+            """
+            UPDATE payment_intents
+            SET provider_reference = COALESCE(?, provider_reference),
+                receipt_token = COALESCE(?, receipt_token),
+                status = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                provider_reference,
+                receipt_token,
+                status,
+                utc_now(),
+                intent_id,
+            ),
+        )
+        _record_payment_event(
+            connection,
+            intent_id=intent_id,
+            event_type=event_type,
+            status=status,
+            payload=payload or {},
+        )
+        connection.commit()
+
+    payload = get_payment_intent(intent_id)
+    if payload is None:
+        raise ValueError("Payment intent not found")
+    return payload
+
+
 def create_payment_intent(
     user_id: str,
     *,
