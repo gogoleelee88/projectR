@@ -83,6 +83,8 @@ Operational notes:
 - Web `stripe` purchases create a hosted Stripe Checkout Session and settle through `POST /webhooks/stripe`.
 - Mobile `app-store` confirmation expects `transactionId` or `originalTransactionId`.
 - Mobile `play-billing` confirmation expects `purchaseToken` and `packageName`.
+- Optional provider bridge writes can use `X-ProjectR-Webhook-Key` with `PROJECTR_PROVIDER_WEBHOOK_KEY`.
+- Operators can monitor payment health through `GET /payments/incidents` and `GET /payments/ops/summary`.
 
 ## Commands
 

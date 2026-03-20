@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -8,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlite3 import IntegrityError
 
 from .db import (
+    apply_payment_lifecycle_update,
     advance_story,
     authenticate_user,
     bootstrap_database,
@@ -22,6 +24,7 @@ from .db import (
     create_user,
     get_economy_catalog,
     get_economy_offer_by_id,
+    get_payment_ops_summary,
     get_payment_intent_by_provider_reference,
     get_economy_state,
     fetch_bootstrap_payload,
@@ -40,6 +43,7 @@ from .db import (
     list_image_styles,
     list_ops_signals,
     list_party_scenarios,
+    list_billing_incidents,
     list_payment_intents,
     list_plans,
     list_releases,
@@ -72,6 +76,7 @@ from .runtime import (
 )
 from .schemas import (
     AuthSessionResponse,
+    BillingIncidentResponse,
     BillingPlanResponse,
     CharacterChatSendRequest,
     CharacterChatSendResponse,
@@ -98,9 +103,11 @@ from .schemas import (
     PartyResolveRequest,
     PartyResolveResponse,
     PaymentEventResponse,
+    PaymentLifecycleUpdateRequest,
     PaymentIntentConfirmRequest,
     PaymentIntentCreateRequest,
     PaymentIntentEnvelopeResponse,
+    PaymentOpsSummaryResponse,
     PaymentIntentResponse,
     RegisterRequest,
     ReleaseCreateRequest,
@@ -152,6 +159,23 @@ def _require_session_user(authorization: str | None) -> dict:
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid session")
     return user
+
+
+def _require_operator_session_user(authorization: str | None) -> dict:
+    user = _require_session_user(authorization)
+    if user["role"] != "operator":
+        raise HTTPException(status_code=403, detail="Operator role required")
+    return user
+
+
+def _authorize_lifecycle_bridge(
+    authorization: str | None,
+    bridge_key: str | None,
+) -> dict | None:
+    expected = os.getenv("PROJECTR_PROVIDER_WEBHOOK_KEY")
+    if expected and bridge_key == expected:
+        return None
+    return _require_operator_session_user(authorization)
 
 
 def _serialize_character_chat_state(payload: dict) -> CharacterChatStateResponse:
@@ -470,6 +494,39 @@ def _serialize_payment_envelope(payload: dict) -> PaymentIntentEnvelopeResponse:
             "settlement": None
             if settlement is None
             else _serialize_economy_checkout(settlement).model_dump(mode="json", by_alias=True),
+        }
+    )
+
+
+def _serialize_billing_incident(payload: dict) -> BillingIncidentResponse:
+    return BillingIncidentResponse.model_validate(
+        {
+            "id": payload["id"],
+            "intentId": payload["intent_id"],
+            "userId": payload["user_id"],
+            "provider": payload["provider"],
+            "severity": payload["severity"],
+            "status": payload["status"],
+            "title": payload["title"],
+            "summary": payload["summary"],
+            "payload": payload["payload"],
+            "createdAt": payload["created_at"],
+            "updatedAt": payload["updated_at"],
+        }
+    )
+
+
+def _serialize_payment_ops_summary(payload: dict) -> PaymentOpsSummaryResponse:
+    return PaymentOpsSummaryResponse.model_validate(
+        {
+            "intentStatusCounts": payload["intent_status_counts"],
+            "providerCounts": payload["provider_counts"],
+            "openIncidents": payload["open_incidents"],
+            "settlementVolume30d": payload["settlement_volume_30d"],
+            "recentIncidents": [
+                _serialize_billing_incident(incident).model_dump(mode="json", by_alias=True)
+                for incident in payload["recent_incidents"]
+            ],
         }
     )
 
@@ -1511,6 +1568,50 @@ def confirm_payment_intent_route(
     return _serialize_payment_envelope(result)
 
 
+@app.post("/payments/intents/{intent_id}/lifecycle", response_model=PaymentIntentEnvelopeResponse)
+def update_payment_lifecycle_route(
+    intent_id: str,
+    payload: PaymentLifecycleUpdateRequest,
+    authorization: str | None = Header(default=None),
+    x_projectr_webhook_key: str | None = Header(default=None, alias="X-ProjectR-Webhook-Key"),
+) -> PaymentIntentEnvelopeResponse:
+    _authorize_lifecycle_bridge(authorization, x_projectr_webhook_key)
+    try:
+        result = apply_payment_lifecycle_update(
+            intent_id,
+            status=payload.status,
+            event_type=payload.event_type,
+            summary=payload.summary,
+            verification_payload=payload.verification_payload,
+            provider_reference=payload.provider_reference,
+            receipt_token=payload.receipt_token,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if message in {"Payment intent not found", "Offer not found"} else 409
+        raise HTTPException(status_code=status_code, detail=message) from exc
+    return _serialize_payment_envelope(result)
+
+
+@app.get("/payments/incidents", response_model=list[BillingIncidentResponse])
+def payment_incidents(
+    authorization: str | None = Header(default=None),
+) -> list[BillingIncidentResponse]:
+    operator = _require_operator_session_user(authorization)
+    incidents = list_billing_incidents(
+        user_id=None if operator["role"] == "operator" else operator["id"],
+    )
+    return [_serialize_billing_incident(incident) for incident in incidents]
+
+
+@app.get("/payments/ops/summary", response_model=PaymentOpsSummaryResponse)
+def payment_ops_summary(
+    authorization: str | None = Header(default=None),
+) -> PaymentOpsSummaryResponse:
+    _require_operator_session_user(authorization)
+    return _serialize_payment_ops_summary(get_payment_ops_summary())
+
+
 @app.post("/webhooks/stripe")
 async def stripe_webhook(request: Request) -> dict[str, str]:
     raw_body = await request.body()
@@ -1533,12 +1634,22 @@ async def stripe_webhook(request: Request) -> dict[str, str]:
     if existing_intent is None:
         return {"status": "ignored"}
 
-    result = settle_payment_intent(
-        existing_intent["id"],
-        provider_reference=parsed["provider_reference"],
-        status=parsed["status"],
-        verification_payload=parsed["verification"],
-    )
+    if parsed["status"] == "paid":
+        result = settle_payment_intent(
+            existing_intent["id"],
+            provider_reference=parsed["provider_reference"],
+            status=parsed["status"],
+            verification_payload=parsed["verification"],
+        )
+    else:
+        result = apply_payment_lifecycle_update(
+            existing_intent["id"],
+            status=parsed["status"],
+            event_type=f"stripe.{parsed['verification'].get('eventType', 'lifecycle')}",
+            summary=f"Stripe lifecycle update: {parsed['status']}",
+            verification_payload=parsed["verification"],
+            provider_reference=parsed["provider_reference"],
+        )
     return {
         "status": "processed",
         "intentId": existing_intent["id"],

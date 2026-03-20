@@ -534,6 +534,23 @@ def bootstrap_database() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_payment_events_intent_created_at
                 ON payment_events (intent_id, created_at DESC);
+            CREATE TABLE IF NOT EXISTS billing_incidents (
+                id TEXT PRIMARY KEY,
+                intent_id TEXT NOT NULL REFERENCES payment_intents(id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                provider TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                status TEXT NOT NULL,
+                title TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_billing_incidents_intent_updated_at
+                ON billing_incidents (intent_id, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_billing_incidents_status_updated_at
+                ON billing_incidents (status, updated_at DESC);
             CREATE TABLE IF NOT EXISTS economy_inventory (
                 id TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1147,6 +1164,64 @@ def _record_payment_event(
         "payload": payload,
         "created_at": created_at,
     }
+
+
+def _serialize_billing_incident(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "intent_id": row["intent_id"],
+        "user_id": row["user_id"],
+        "provider": row["provider"],
+        "severity": row["severity"],
+        "status": row["status"],
+        "title": row["title"],
+        "summary": row["summary"],
+        "payload": json.loads(row["payload_json"]) if row["payload_json"] else {},
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _record_billing_incident(
+    connection: sqlite3.Connection,
+    *,
+    intent_id: str,
+    user_id: str,
+    provider: str,
+    severity: str,
+    status: str,
+    title: str,
+    summary: str,
+    payload: dict | None = None,
+) -> dict:
+    incident_id = str(uuid4())
+    now = utc_now()
+    connection.execute(
+        """
+        INSERT INTO billing_incidents (
+            id, intent_id, user_id, provider, severity, status,
+            title, summary, payload_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            incident_id,
+            intent_id,
+            user_id,
+            provider,
+            severity,
+            status,
+            title,
+            summary,
+            json.dumps(payload or {}, ensure_ascii=False),
+            now,
+            now,
+        ),
+    )
+    row = connection.execute(
+        "SELECT * FROM billing_incidents WHERE id = ?",
+        (incident_id,),
+    ).fetchone()
+    return _serialize_billing_incident(row)
 
 
 def _record_spark_ledger_entry(
@@ -2877,6 +2952,219 @@ def record_payment_provider_state(
     if payload is None:
         raise ValueError("Payment intent not found")
     return payload
+
+
+def list_billing_incidents(
+    *,
+    user_id: str | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    with get_connection() as connection:
+        if user_id:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM billing_incidents
+                WHERE user_id = ?
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (user_id, limit),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM billing_incidents
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [_serialize_billing_incident(row) for row in rows]
+
+
+def get_payment_ops_summary() -> dict:
+    with get_connection() as connection:
+        status_rows = connection.execute(
+            """
+            SELECT status, COUNT(*) AS count
+            FROM payment_intents
+            GROUP BY status
+            """
+        ).fetchall()
+        provider_rows = connection.execute(
+            """
+            SELECT provider, COUNT(*) AS count
+            FROM payment_intents
+            GROUP BY provider
+            """
+        ).fetchall()
+        open_incidents = connection.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM billing_incidents
+            WHERE status = 'open'
+            """
+        ).fetchone()
+        settlement_row = connection.execute(
+            """
+            SELECT COALESCE(SUM(amount), 0) AS total
+            FROM payment_intents
+            WHERE status = 'settled'
+              AND settled_at >= datetime('now', '-30 days')
+            """
+        ).fetchone()
+        incidents = connection.execute(
+            """
+            SELECT *
+            FROM billing_incidents
+            ORDER BY updated_at DESC
+            LIMIT 12
+            """
+        ).fetchall()
+    return {
+        "intent_status_counts": {row["status"]: row["count"] for row in status_rows},
+        "provider_counts": {row["provider"]: row["count"] for row in provider_rows},
+        "open_incidents": 0 if open_incidents is None else open_incidents["count"],
+        "settlement_volume_30d": 0 if settlement_row is None else settlement_row["total"],
+        "recent_incidents": [_serialize_billing_incident(row) for row in incidents],
+    }
+
+
+def apply_payment_lifecycle_update(
+    intent_id: str,
+    *,
+    status: str,
+    event_type: str,
+    summary: str,
+    verification_payload: dict | None = None,
+    provider_reference: str | None = None,
+    receipt_token: str | None = None,
+) -> dict:
+    with get_connection() as connection:
+        intent_row = connection.execute(
+            """
+            SELECT *
+            FROM payment_intents
+            WHERE id = ?
+            """,
+            (intent_id,),
+        ).fetchone()
+        if intent_row is None:
+            raise ValueError("Payment intent not found")
+
+        intent = _serialize_payment_intent(intent_row)
+        offer = get_economy_offer_by_id(intent["offer_id"])
+        if offer is None:
+            raise ValueError("Offer not found")
+
+        now = utc_now()
+        connection.execute(
+            """
+            UPDATE payment_intents
+            SET status = ?,
+                provider_reference = COALESCE(?, provider_reference),
+                receipt_token = COALESCE(?, receipt_token),
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (status, provider_reference, receipt_token, now, intent_id),
+        )
+
+        latest_entry = None
+        incident = None
+        reversal_value = int(offer["grant_sparks"]) + int(offer["bonus_sparks"])
+        terminal_negative = {"refunded", "cancelled", "charged_back", "expired"}
+        if intent["status"] == "settled" and status in terminal_negative:
+            if reversal_value > 0:
+                try:
+                    latest_entry = _record_spark_ledger_entry(
+                        connection,
+                        user_id=intent["user_id"],
+                        amount_delta=-reversal_value,
+                        source_kind="billing_lifecycle",
+                        source_id=intent_id,
+                        title=f"{offer['name']} reversal",
+                        summary=summary,
+                    )
+                except ValueError:
+                    latest_entry = None
+
+            if intent["subscription_id"]:
+                connection.execute(
+                    """
+                    UPDATE subscriptions
+                    SET status = ?, renewal_at = ?
+                    WHERE id = ?
+                    """,
+                    ("cancelled", now, intent["subscription_id"]),
+                )
+
+            incident = _record_billing_incident(
+                connection,
+                intent_id=intent_id,
+                user_id=intent["user_id"],
+                provider=intent["provider"],
+                severity="critical" if status == "charged_back" else "high",
+                status="open",
+                title=f"{offer['name']} {status}",
+                summary=summary,
+                payload={
+                    "previousStatus": intent["status"],
+                    "reversalApplied": latest_entry is not None,
+                    "verification": verification_payload or {},
+                },
+            )
+        elif status in {"failed", "payment_failed"}:
+            incident = _record_billing_incident(
+                connection,
+                intent_id=intent_id,
+                user_id=intent["user_id"],
+                provider=intent["provider"],
+                severity="medium",
+                status="open",
+                title=f"{offer['name']} payment failed",
+                summary=summary,
+                payload={"previousStatus": intent["status"], "verification": verification_payload or {}},
+            )
+
+        _record_payment_event(
+            connection,
+            intent_id=intent_id,
+            event_type=event_type,
+            status=status,
+            payload={
+                "previousStatus": intent["status"],
+                "summary": summary,
+                "verification": verification_payload or {},
+                "incident": incident,
+            },
+        )
+        connection.commit()
+
+        updated_row = connection.execute(
+            "SELECT * FROM payment_intents WHERE id = ?",
+            (intent_id,),
+        ).fetchone()
+        events = connection.execute(
+            """
+            SELECT *
+            FROM payment_events
+            WHERE intent_id = ?
+            ORDER BY created_at DESC
+            """,
+            (intent_id,),
+        ).fetchall()
+
+    return {
+        "intent": _serialize_payment_intent(updated_row),
+        "offer": offer,
+        "events": [_serialize_payment_event(event) for event in events],
+        "settlement": None,
+        "latest_entry": latest_entry,
+        "incident": incident,
+    }
 
 
 def create_payment_intent(
