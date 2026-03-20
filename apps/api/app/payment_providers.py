@@ -382,6 +382,10 @@ def parse_stripe_webhook(signature_header: str | None, raw_body: bytes) -> dict 
         "checkout.session.async_payment_succeeded": "paid",
         "checkout.session.async_payment_failed": "failed",
         "checkout.session.expired": "cancelled",
+        "charge.refunded": "refunded",
+        "charge.dispute.created": "charged_back",
+        "invoice.payment_failed": "payment_failed",
+        "customer.subscription.deleted": "cancelled",
     }
     if event_type not in status_map:
         return None

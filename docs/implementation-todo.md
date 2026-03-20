@@ -47,3 +47,4 @@ This file is the working order of execution. Items are implemented in sequence a
 - In progress: payment-reward economy now includes a dedicated store shell, wallet ledger, premium inventory, offer checkout, spark redemption flows, and payment-intent settlement history
 - In progress: mobile app now uses live auth, wallet sync, store checkout, redemption, and payment timeline APIs
 - In progress: Stripe checkout sessions, Stripe webhook settlement, App Store Server verification, and Google Play purchase verification are wired into the payment-intent layer
+- In progress: payment lifecycle sync now tracks refunds, cancellations, chargebacks, and operator-facing billing incidents/summary APIs

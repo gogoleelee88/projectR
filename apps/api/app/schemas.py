@@ -578,3 +578,37 @@ class PaymentIntentEnvelopeResponse(BaseModel):
     offer: EconomyOfferResponse
     events: list[PaymentEventResponse]
     settlement: EconomyCheckoutResponse | None = None
+
+
+class PaymentLifecycleUpdateRequest(BaseModel):
+    status: str
+    event_type: str = Field(alias="eventType")
+    summary: str
+    verification_payload: dict[str, object] | None = Field(
+        default=None,
+        alias="verificationPayload",
+    )
+    provider_reference: str | None = Field(default=None, alias="providerReference")
+    receipt_token: str | None = Field(default=None, alias="receiptToken")
+
+
+class BillingIncidentResponse(BaseModel):
+    id: str
+    intent_id: str = Field(alias="intentId")
+    user_id: str = Field(alias="userId")
+    provider: str
+    severity: str
+    status: str
+    title: str
+    summary: str
+    payload: dict[str, object]
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+
+
+class PaymentOpsSummaryResponse(BaseModel):
+    intent_status_counts: dict[str, int] = Field(alias="intentStatusCounts")
+    provider_counts: dict[str, int] = Field(alias="providerCounts")
+    open_incidents: int = Field(alias="openIncidents")
+    settlement_volume_30d: int = Field(alias="settlementVolume30d")
+    recent_incidents: list[BillingIncidentResponse] = Field(alias="recentIncidents")
