@@ -201,6 +201,7 @@ export type PaymentIntent = {
   providerReference?: string | null;
   purchaseId?: string | null;
   subscriptionId?: string | null;
+  providerPayload?: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
   settledAt?: string | null;

@@ -109,14 +109,26 @@ export function EconomyStoreShell({ initialCatalog }: Props) {
       setMessage("Log in to create and settle a payment intent.");
       return;
     }
+    const provider = process.env.NEXT_PUBLIC_WEB_PAYMENT_PROVIDER ?? "web-sandbox";
     setPendingId(offer.id);
     const created = await requestWithToken<PaymentIntentEnvelope>("/payments/intents", token, {
       method: "POST",
-      body: JSON.stringify({ offerId: offer.id, provider: "web-sandbox", platform: "web" }),
+      body: JSON.stringify({ offerId: offer.id, provider, platform: "web" }),
     });
     if (!created.data) {
       setPendingId(null);
       setMessage(created.error ?? "Unable to create payment intent.");
+      return;
+    }
+    const checkoutUrl =
+      typeof created.data.intent.providerPayload?.checkoutUrl === "string"
+        ? created.data.intent.providerPayload.checkoutUrl
+        : null;
+    if (checkoutUrl) {
+      setPendingId(null);
+      setMessage("Stripe checkout session created. Complete payment in the hosted checkout window.");
+      window.open(checkoutUrl, "_blank", "noopener,noreferrer");
+      await refreshAccount(token);
       return;
     }
     const ref = `web-${offer.id}-${Date.now()}`;

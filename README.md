@@ -30,6 +30,7 @@ This repository now includes a locally usable product shell built around:
 - Creator queue with release drafts and revenue projection
 - Membership checkout with subscription records and optional live billing webhook adapter
 - Mobile app with the same core tabs and local interaction loops
+- Payment-intent settlement layer with Stripe checkout/webhooks, App Store verification, and Google Play verification hooks
 
 ## Optional live adapters
 
@@ -39,9 +40,49 @@ If you already operate external AI or billing services, point the API at them wi
 PROJECTR_CHAT_WEBHOOK_URL=https://your-service.example/chat
 PROJECTR_STUDIO_WEBHOOK_URL=https://your-service.example/studio
 PROJECTR_BILLING_WEBHOOK_URL=https://your-service.example/checkout
+PROJECTR_PAYMENT_VERIFY_WEBHOOK_URL=https://your-service.example/payment-verify
 ```
 
 Each webhook is expected to accept JSON POST requests and return the normalized response fields used by the API.
+
+## Live commerce providers
+
+Stripe web checkout:
+
+```bash
+PROJECTR_STRIPE_SECRET_KEY=sk_live_...
+PROJECTR_STRIPE_PUBLISHABLE_KEY=pk_live_...
+PROJECTR_STRIPE_WEBHOOK_SECRET=whsec_...
+PROJECTR_STRIPE_SUCCESS_URL=https://your-web.example/store?checkout=success&session_id={CHECKOUT_SESSION_ID}
+PROJECTR_STRIPE_CANCEL_URL=https://your-web.example/store?checkout=cancel
+NEXT_PUBLIC_WEB_PAYMENT_PROVIDER=stripe
+```
+
+App Store Server API:
+
+```bash
+PROJECTR_APPLE_ISSUER_ID=...
+PROJECTR_APPLE_KEY_ID=...
+PROJECTR_APPLE_BUNDLE_ID=com.example.projectr
+PROJECTR_APPLE_PRIVATE_KEY_PATH=C:\\keys\\AuthKey_ABC123XYZ.p8
+PROJECTR_APPLE_ENVIRONMENT=sandbox
+EXPO_PUBLIC_MOBILE_BILLING_PROVIDER=app-store
+EXPO_PUBLIC_APPLE_ENVIRONMENT=sandbox
+```
+
+Google Play Billing:
+
+```bash
+PROJECTR_GOOGLE_SERVICE_ACCOUNT_JSON_PATH=C:\\keys\\google-play-service-account.json
+PROJECTR_GOOGLE_PACKAGE_NAME=com.example.projectr
+EXPO_PUBLIC_MOBILE_BILLING_PROVIDER=play-billing
+```
+
+Operational notes:
+
+- Web `stripe` purchases create a hosted Stripe Checkout Session and settle through `POST /webhooks/stripe`.
+- Mobile `app-store` confirmation expects `transactionId` or `originalTransactionId`.
+- Mobile `play-billing` confirmation expects `purchaseToken` and `packageName`.
 
 ## Commands
 
